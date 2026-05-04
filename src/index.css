@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+@layer base {
+  button, 
+  [role="button"],
+  input[type="submit"],
+  input[type="button"],
+  input[type="reset"],
+  input[type="checkbox"],
+  input[type="radio"],
+  select,
+  a {
+    cursor: pointer;
+  }
+}
+
+/* Sticky columns overlay for attendance table */
+.sticky-col-1 {
+  position: sticky;
+  left: 0;
+  z-index: 20;
+  background-color: white;
+}
+
+.sticky-col-2 {
+  position: sticky;
+  left: 150px;
+  z-index: 20;
+  background-color: white;
+}
+
+.sticky-col-3 {
+  position: sticky;
+  left: 250px;
+  z-index: 20;
+  background-color: white !important;
+  box-shadow: 4px 0 8px -4px rgba(0,0,0,0.2);
+}
+
+.sticky-col-1,
+.sticky-col-2 {
+  background-color: white !important;
+}
+
+.sticky-col-1-header,
+.sticky-col-2-header,
+.sticky-col-3-header {
+  background-color: rgb(243 244 246) !important;
+}
+
+.sticky-col-1-header {
+  position: sticky;
+  left: 0;
+  z-index: 20;
+  background-color: rgb(243 244 246);
+}
+
+.sticky-col-2-header {
+  position: sticky;
+  left: 150px;
+  z-index: 20;
+  background-color: rgb(243 244 246);
+}
+
+.sticky-col-3-header {
+  position: sticky;
+  left: 250px;
+  z-index: 20;
+  background-color: rgb(243 244 246);
+  box-shadow: 4px 0 8px -4px rgba(0,0,0,0.2);
+}
+
+/* Ensure no gaps between sticky columns */
+.attendance-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.attendance-table td,
+.attendance-table th {
+  border-right: 1px solid #e5e7eb;
+}
+
+/* Recharts tooltip always on top */
+.recharts-tooltip-wrapper {
+  z-index: 99999 !important;
+  pointer-events: none;
+}
+
+.recharts-legend-wrapper {
+  z-index: 1 !important;
+}
