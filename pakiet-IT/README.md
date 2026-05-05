@@ -68,7 +68,7 @@ docker-compose logs -f
 
 ### 4. Weryfikacja
 
-Aplikacja dostępna pod adresem: `http://ADRES_SERWERA:3000`
+Aplikacja dostępna pod adresem: `http://ADRES_SERWERA` (port 80)
 
 **Domyślne dane logowania:**
 - Login: `admin`
@@ -122,7 +122,8 @@ docker-compose logs --tail=100
 
 | Port | Usługa |
 |------|--------|
-| 3000 | Aplikacja (HTTP) |
+| 80 | Frontend (Nginx) |
+| 3000 | Backend API (wewnętrzny) |
 
 ---
 

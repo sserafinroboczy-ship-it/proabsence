@@ -76,6 +76,11 @@ async function startServer() {
 
   // --- API Routes ---
 
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // Auth Middleware
   const authenticate = (req: any, res: any, next: any) => {
     const authHeader = req.headers.authorization;
