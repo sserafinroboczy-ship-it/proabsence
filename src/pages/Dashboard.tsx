@@ -25,6 +25,20 @@ export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
   const [selectedHallId, setSelectedHallId] = useState<number | "global">("global");
 
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [expandedAlerts, setExpandedAlerts] = useState<{tomorrow: boolean, recurring: boolean, vacation: boolean}>({
+    tomorrow: false,
+    recurring: false,
+    vacation: false
+  });
+
+  // Odświeżaj dane gdy okno uzyska focus (powrót z innej strony)
+  useEffect(() => {
+    const handleFocus = () => setRefreshKey(k => k + 1);
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
   useEffect(() => {
     fetchApi("/api/halls").then(data => {
       const activeHalls = data.filter((h: any) => h.is_active);
@@ -35,7 +49,7 @@ export default function Dashboard() {
         setEmployees(emps.filter((e: any) => activeHallIds.includes(e.hall_id)));
       });
     });
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     const start = format(startOfMonth(new Date(selectedMonth)), "yyyy-MM-dd");
@@ -49,7 +63,7 @@ export default function Dashboard() {
         setAbsences(data);
       }
     });
-  }, [selectedMonth, halls]);
+  }, [selectedMonth, halls, refreshKey]);
 
   // Generate days of the month
   const daysInMonth = eachDayOfInterval({
@@ -133,12 +147,15 @@ export default function Dashboard() {
 
     hallEmployees.forEach(emp => {
       const empAbsences = hallAbsences.filter(a => a.employee_id === emp.id);
+      const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+      
       // Liczymy tylko dni robocze (pon-pt, bez świąt) do frekwencji
       let presentDays = empAbsences.filter(a => {
         const date = new Date(a.date);
         return a.type === "present" && (a.working_hours > 0 || a.overtime_hours > 0) && isWorkingDay(date);
       }).length;
-      let overtime = empAbsences.reduce((sum, a) => sum + (a.overtime_hours || 0), 0);
+      // Nadgodziny tylko dla Etat (nie Agencja/DG)
+      let overtime = isAgencyOrDG ? 0 : empAbsences.reduce((sum, a) => sum + (a.overtime_hours || 0), 0);
       
       totalPresentDays += presentDays;
       totalOvertime += overtime;
@@ -174,6 +191,8 @@ export default function Dashboard() {
       if (!record) return;
 
       const type = record.type;
+      const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+      
       if (type === "present" && (record.working_hours > 0 || record.overtime_hours > 0)) {
         present++;
         // Rzeczywiste godziny pracy (working_hours + overtime_hours) minus 0.5h przerwy
@@ -187,7 +206,8 @@ export default function Dashboard() {
       else if (type === "blood") blood++;
       else if (type === "unpaid") unpaid++;
       
-      if (record.overtime_hours) overtime += record.overtime_hours;
+      // Nadgodziny tylko dla Etat (nie Agencja/DG)
+      if (record.overtime_hours && !isAgencyOrDG) overtime += record.overtime_hours;
     });
 
     return {
@@ -208,9 +228,9 @@ export default function Dashboard() {
   // Hall Stats
   let hallStats = { 
     frequency: 0, 
-    bestEmployee: null as any,
-    worstEmployee: null as any,
-    overtimeLeader: null as any,
+    bestEmployees: [] as any[],
+    worstEmployees: [] as any[],
+    overtimeLeaders: [] as any[],
     totalOvertime: 0,
     frequencyTrend: 0,
     criticalDays: [] as { date: string; present: number; absent: number }[],
@@ -230,17 +250,28 @@ export default function Dashboard() {
 
     const empStats = hallEmployees.map(emp => {
       const empAbsences = hallAbsences.filter(a => a.employee_id === emp.id);
+      const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+      
       // Filtruj tylko dni robocze (pon-pt, bez świąt) do frekwencji
       let presentDays = empAbsences.filter(a => {
         const date = new Date(a.date);
         return a.type === "present" && (a.working_hours > 0 || a.overtime_hours > 0) && isWorkingDay(date);
       }).length;
-      let overtime = empAbsences.reduce((sum, a) => sum + (a.overtime_hours || 0), 0);
-      let workingHours = empAbsences.reduce((sum, a) => sum + (a.working_hours || 0), 0);
+      // Nadgodziny tylko dla Etat (nie Agencja/DG)
+      let overtime = isAgencyOrDG ? 0 : empAbsences.reduce((sum, a) => sum + (a.overtime_hours || 0), 0);
+      // Godziny pracy: dla Agencja/DG doliczamy też nadgodziny
+      let workingHours = empAbsences.reduce((sum, a) => {
+        const wh = a.working_hours || 0;
+        const oh = a.overtime_hours || 0;
+        return sum + wh + (isAgencyOrDG ? oh : 0);
+      }, 0);
       let vacationDays = empAbsences.filter(a => a.type === "vacation").length;
       let sickDays = empAbsences.filter(a => a.type === "sick").length;
       let unplannedDays = empAbsences.filter(a => a.type === "unplanned").length;
-      let totalAbsenceDays = vacationDays + sickDays + unplannedDays;
+      let careDays = empAbsences.filter(a => a.type === "care").length;
+      let bloodDays = empAbsences.filter(a => a.type === "blood").length;
+      let unpaidDays = empAbsences.filter(a => a.type === "unpaid").length;
+      let totalAbsenceDays = vacationDays + sickDays + unplannedDays + careDays + bloodDays + unpaidDays;
       
       // Count absences by day of week for recurring pattern detection
       const absencesByDayOfWeek: Record<number, number> = {};
@@ -261,6 +292,9 @@ export default function Dashboard() {
         vacationDays,
         sickDays,
         unplannedDays,
+        careDays,
+        bloodDays,
+        unpaidDays,
         totalAbsenceDays,
         absencesByDayOfWeek,
         score: presentDays + (overtime * 0.5)
@@ -273,22 +307,27 @@ export default function Dashboard() {
       : 0;
     
     if (empStats.length > 0) {
-      // Best employee (most engaged)
-      hallStats.bestEmployee = empStats.reduce((best, current) => (current.score > best.score ? current : best), empStats[0]);
+      // Top 3 best employees (most engaged)
+      hallStats.bestEmployees = [...empStats]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
       
-      // Worst employee (most absences)
-      const worstCandidate = empStats.reduce((worst, current) => 
-        (current.totalAbsenceDays > worst.totalAbsenceDays ? current : worst), empStats[0]);
-      if (worstCandidate.totalAbsenceDays > 0) {
-        hallStats.worstEmployee = worstCandidate;
-      }
+      // Top 3 worst employees (most absences - BEZ urlopu)
+      const withNonVacationAbsences = empStats.map(emp => ({
+        ...emp,
+        nonVacationAbsences: emp.sickDays + emp.unplannedDays + 
+          (emp.careDays || 0) + (emp.bloodDays || 0) + (emp.unpaidDays || 0)
+      }));
+      hallStats.worstEmployees = [...withNonVacationAbsences]
+        .filter(emp => emp.nonVacationAbsences > 0)
+        .sort((a, b) => b.nonVacationAbsences - a.nonVacationAbsences)
+        .slice(0, 3);
       
-      // Overtime leader
-      const overtimeCandidate = empStats.reduce((leader, current) => 
-        (current.overtime > leader.overtime ? current : leader), empStats[0]);
-      if (overtimeCandidate.overtime > 0) {
-        hallStats.overtimeLeader = overtimeCandidate;
-      }
+      // Top 3 overtime leaders
+      hallStats.overtimeLeaders = [...empStats]
+        .filter(emp => emp.overtime > 0)
+        .sort((a, b) => b.overtime - a.overtime)
+        .slice(0, 3);
       
       // Recurring absences (same day of week 3+ times)
       const dayNames = ["niedziela", "poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota"];
@@ -386,7 +425,7 @@ export default function Dashboard() {
               <div style={{ minWidth: '1000px', height: '500px' }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={globalDailyData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis 
                       dataKey="date" 
                       interval={0} 
@@ -459,12 +498,12 @@ export default function Dashboard() {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h4 className="text-base font-medium text-gray-700 mb-4">Godziny Pracy - Globalnie (z podziałem na hale)</h4>
             <div className="overflow-x-auto pb-4 custom-scrollbar">
-              <div style={{ minWidth: '1500px', height: '550px' }}>
+              <div style={{ minWidth: '1500px', height: '480px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={globalDailyData} margin={{ top: 100, right: 30, left: 20, bottom: 20 }} barGap={3} barCategoryGap="20%">
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <BarChart data={globalDailyData} margin={{ top: 40, right: 30, left: 20, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis dataKey="date" interval={0} tick={{fontSize: 12, fontWeight: 'bold', fill: '#475569'}} angle={-45} textAnchor="end" height={80} axisLine={false} tickLine={false} />
-                    <YAxis tick={{fontSize: 11, fill: '#64748b'}} axisLine={false} tickLine={false} label={{ value: 'Suma godzin', angle: -90, position: 'insideLeft', offset: -10, style: { fontSize: 13, fontWeight: 'medium', fill: '#64748b' } }} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.6)]} />
+                    <YAxis tick={{fontSize: 11, fill: '#64748b'}} axisLine={false} tickLine={false} label={{ value: 'Suma godzin', angle: -90, position: 'insideLeft', offset: -10, style: { fontSize: 13, fontWeight: 'medium', fill: '#64748b' } }} />
                     <Tooltip 
                       cursor={{ fill: '#f8fafc' }}
                       content={({ active, payload, label }) => {
@@ -527,46 +566,100 @@ export default function Dashboard() {
                     {halls.map((hall, index) => {
                       const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
                       const color = colors[index % colors.length];
+                      const isLastHall = index === halls.length - 1;
                       return (
                         <Bar 
                           key={hall.id} 
                           dataKey={hall.name} 
+                          stackId="hours"
                           fill={color} 
                           name={hall.name}
-                          radius={[4, 4, 0, 0]}
+                          radius={isLastHall ? [4, 4, 0, 0] : [0, 0, 0, 0]}
                         >
-                          <LabelList 
-                            dataKey={hall.name} 
-                            position="top" 
-                            content={(props: any) => {
-                              const { x, y, width, value } = props;
-                              if (!value || value === 0) return null;
-                              return (
-                                <text 
-                                  x={x + width / 2} 
-                                  y={y - 18} 
-                                  fill={color} 
-                                  textAnchor="middle" 
-                                  fontSize={11} 
-                                  fontWeight="black"
-                                  transform={`rotate(-90, ${x + width / 2}, ${y - 18})`}
-                                >
-                                  {value}h
-                                </text>
-                              );
-                            }}
-                          />
                           <LabelList 
                             dataKey={`${hall.name}_count`}
                             position="center" 
                             fill="#fff" 
                             fontSize={11} 
-                            fontWeight="black"
+                            fontWeight="bold"
                             formatter={(val: number) => val > 0 ? val : ''}
                           />
                         </Bar>
                       );
                     })}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Nowy wykres - Suma godzin dziennie */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h4 className="text-base font-medium text-gray-700 mb-4">Suma Godzin Dziennie - Wszystkie Hale ({format(new Date(selectedMonth), "MM.yyyy")})</h4>
+            <div className="overflow-x-auto pb-4 custom-scrollbar">
+              <div style={{ minWidth: '1200px', height: '400px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart 
+                    data={globalDailyData.map(day => ({
+                      ...day,
+                      SumaGodzin: halls.reduce((sum, hall) => sum + (day[hall.name] || 0), 0),
+                      SumaOsob: halls.reduce((sum, hall) => sum + (day[`${hall.name}_count`] || 0), 0)
+                    }))} 
+                    margin={{ top: 30, right: 30, left: 20, bottom: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis 
+                      dataKey="date" 
+                      interval={0} 
+                      tick={{fontSize: 12, fontWeight: 'bold', fill: '#475569'}} 
+                      axisLine={false} 
+                      tickLine={false}
+                    />
+                    <YAxis 
+                      tick={{fontSize: 11, fill: '#64748b'}} 
+                      axisLine={false} 
+                      tickLine={false}
+                      label={{ value: 'Godziny', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#64748b' } }}
+                    />
+                    <Tooltip 
+                      cursor={{ fill: '#f1f5f9' }}
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-white p-3 border border-gray-200 shadow-xl rounded-xl">
+                              <p className="text-sm font-bold text-gray-800 mb-2 border-b border-gray-100 pb-1">Dzień: {label}</p>
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-xs font-medium text-gray-600">Suma godzin:</span>
+                                  <span className="text-sm font-black text-blue-600">{data.SumaGodzin}h</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-xs font-medium text-gray-600">Obecnych osób:</span>
+                                  <span className="text-sm font-bold text-emerald-600">{data.SumaOsob}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar 
+                      dataKey="SumaGodzin" 
+                      fill="#6366f1" 
+                      radius={[4, 4, 0, 0]}
+                      name="Suma godzin"
+                    >
+                      <LabelList 
+                        dataKey="SumaGodzin" 
+                        position="top" 
+                        fill="#4f46e5" 
+                        fontSize={11} 
+                        fontWeight="bold"
+                        formatter={(val: number) => val > 0 ? `${val}h` : ''}
+                      />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -579,7 +672,7 @@ export default function Dashboard() {
               <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={globalHallStats} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis dataKey="name" />
                     <YAxis />
                     <Tooltip cursor={{ fill: '#f9fafb' }} />
@@ -596,7 +689,7 @@ export default function Dashboard() {
               <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={globalHallStats} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis dataKey="name" />
                     <YAxis />
                     <Tooltip cursor={{ fill: '#f9fafb' }} />
@@ -612,21 +705,16 @@ export default function Dashboard() {
       ) : (
         <div className="space-y-6">
           {/* Hall Stats Summary - Row 1 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Frekwencja */}
             <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
               <div>
                 <p className="text-xs text-gray-500 font-medium mb-1">Średnia Frekwencja</p>
-                <p className="text-2xl font-bold text-gray-800">{hallStats.frequency}%</p>
-                {hallStats.frequencyTrend !== 0 && (
-                  <p className={`text-xs font-medium mt-1 ${hallStats.frequencyTrend > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {hallStats.frequencyTrend > 0 ? '↑' : '↓'} {Math.abs(hallStats.frequencyTrend)}% vs 1. połowa m-ca
-                  </p>
-                )}
+                <p className="text-2xl font-bold text-blue-600">{hallStats.frequency}%</p>
               </div>
               <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
               </div>
             </div>
@@ -657,75 +745,92 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Dni krytyczne */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-              <p className="text-xs text-gray-500 font-medium mb-2">Dni Krytyczne (najniższa obsada)</p>
-              {hallStats.criticalDays.length > 0 ? (
-                <div className="space-y-1">
-                  {hallStats.criticalDays.slice(0, 2).map((d, i) => (
-                    <div key={i} className="flex justify-between text-xs">
-                      <span className="text-gray-600">{format(new Date(d.date), "dd.MM")}</span>
-                      <span className="font-medium">
-                        <span className="text-green-600">{d.present} ob.</span> / <span className="text-red-600">{d.absent} nb.</span>
-                      </span>
+          </div>
+
+          {/* Hall Stats Summary - Row 2: Employee Cards - Top 3 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Top 3 Best Employees */}
+            {hallStats.bestEmployees.length > 0 && (
+              <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-5 rounded-xl shadow-sm border border-amber-100">
+                <p className="text-xs text-amber-700 font-medium mb-3">⭐ Top 3 - Najbardziej Zaangażowani</p>
+                <div className="space-y-3">
+                  {hallStats.bestEmployees.map((emp, idx) => (
+                    <div key={emp.id} className={`${idx > 0 ? 'pt-2 border-t border-amber-200' : ''}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-amber-600">{idx + 1}.</span>
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">
+                            {emp.employee_number && <span className="text-sm font-bold text-gray-800 mr-1">{emp.employee_number}</span>}
+                            {emp.first_name} {emp.last_name}
+                          </p>
+                          <p className="text-[10px] text-gray-500">{emp.position}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-3 mt-1 ml-5 text-[10px]">
+                        <span><strong className="text-green-600">Obecność:</strong> {emp.presentDays}d</span>
+                        <span><strong className="text-purple-600">Nadgodziny:</strong> {emp.overtime}h</span>
+                      </div>
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p className="text-xs text-gray-400">Brak danych</p>
-              )}
-            </div>
-          </div>
-
-          {/* Hall Stats Summary - Row 2: Employee Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Best Employee */}
-            {hallStats.bestEmployee && (
-              <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-5 rounded-xl shadow-sm border border-amber-100">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-xs text-amber-700 font-medium mb-1">⭐ Najbardziej Zaangażowany</p>
-                    <p className="text-lg font-bold text-gray-800">{hallStats.bestEmployee.first_name} {hallStats.bestEmployee.last_name}</p>
-                    <p className="text-xs text-gray-600">{hallStats.bestEmployee.position}</p>
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-gray-700">
-                      <span><strong className="text-green-600">Obecność:</strong> {hallStats.bestEmployee.presentDays} dni</span>
-                      <span><strong className="text-purple-600">Nadgodziny:</strong> {hallStats.bestEmployee.overtime}h</span>
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
 
-            {/* Overtime Leader */}
-            {hallStats.overtimeLeader && (
+            {/* Top 3 Overtime Leaders */}
+            {hallStats.overtimeLeaders.length > 0 && (
               <div className="bg-gradient-to-br from-purple-50 to-indigo-50 p-5 rounded-xl shadow-sm border border-purple-100">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-xs text-purple-700 font-medium mb-1">🏆 Lider Nadgodzin</p>
-                    <p className="text-lg font-bold text-gray-800">{hallStats.overtimeLeader.first_name} {hallStats.overtimeLeader.last_name}</p>
-                    <p className="text-xs text-gray-600">{hallStats.overtimeLeader.position}</p>
-                    <div className="mt-2 text-xs">
-                      <span className="font-bold text-purple-600">{hallStats.overtimeLeader.overtime}h nadgodzin</span>
+                <p className="text-xs text-purple-700 font-medium mb-3">🏆 Top 3 - Liderzy Nadgodzin</p>
+                <div className="space-y-3">
+                  {hallStats.overtimeLeaders.map((emp, idx) => (
+                    <div key={emp.id} className={`${idx > 0 ? 'pt-2 border-t border-purple-200' : ''}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-purple-600">{idx + 1}.</span>
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">
+                            {emp.employee_number && <span className="text-sm font-bold text-gray-800 mr-1">{emp.employee_number}</span>}
+                            {emp.first_name} {emp.last_name}
+                          </p>
+                          <p className="text-[10px] text-gray-500">{emp.position}</p>
+                        </div>
+                      </div>
+                      <div className="mt-1 ml-5 text-[10px]">
+                        <span className="font-bold text-purple-600">{emp.overtime}h nadgodzin</span>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* Worst Employee (most absences) */}
-            {hallStats.worstEmployee && (
+            {/* Top 3 Worst Employees (most absences - BEZ urlopu) */}
+            {hallStats.worstEmployees.length > 0 && (
               <div className="bg-gradient-to-br from-red-50 to-rose-50 p-5 rounded-xl shadow-sm border border-red-100">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-xs text-red-700 font-medium mb-1">⚠️ Najczęściej Nieobecny</p>
-                    <p className="text-lg font-bold text-gray-800">{hallStats.worstEmployee.first_name} {hallStats.worstEmployee.last_name}</p>
-                    <p className="text-xs text-gray-600">{hallStats.worstEmployee.position}</p>
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-gray-700">
-                      {hallStats.worstEmployee.vacationDays > 0 && <span><strong className="text-blue-600">Urlop:</strong> {hallStats.worstEmployee.vacationDays}d</span>}
-                      {hallStats.worstEmployee.sickDays > 0 && <span><strong className="text-red-600">L4:</strong> {hallStats.worstEmployee.sickDays}d</span>}
-                      {hallStats.worstEmployee.unplannedDays > 0 && <span><strong className="text-orange-600">NŻ:</strong> {hallStats.worstEmployee.unplannedDays}d</span>}
+                <p className="text-xs text-red-700 font-medium mb-3">⚠️ Top 3 - Najczęściej Nieobecni (bez urlopu)</p>
+                <div className="space-y-3">
+                  {hallStats.worstEmployees.map((emp, idx) => (
+                    <div key={emp.id} className={`${idx > 0 ? 'pt-2 border-t border-red-200' : ''}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-red-600">{idx + 1}.</span>
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">
+                            {emp.employee_number && <span className="text-sm font-bold text-gray-800 mr-1">{emp.employee_number}</span>}
+                            {emp.first_name} {emp.last_name}
+                          </p>
+                          <p className="text-[10px] text-gray-500">{emp.position}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5 ml-5 text-[10px]">
+                        {emp.sickDays > 0 && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded">L4: {emp.sickDays}d</span>}
+                        {emp.unplannedDays > 0 && <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">NŻ: {emp.unplannedDays}d</span>}
+                        {emp.careDays > 0 && <span className="bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded">OP: {emp.careDays}d</span>}
+                        {emp.bloodDays > 0 && <span className="bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded">KR: {emp.bloodDays}d</span>}
+                        {emp.unpaidDays > 0 && <span className="bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded">BL: {emp.unpaidDays}d</span>}
+                        <span className="bg-gradient-to-r from-red-500 to-rose-600 text-white px-2 py-0.5 rounded-full font-bold shadow-sm">
+                          Σ {emp.nonVacationAbsences}d
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -741,15 +846,32 @@ export default function Dashboard() {
                 {/* Tomorrow's absences */}
                 {hallStats.tomorrowAbsences.length > 0 && (
                   <div className="bg-white p-3 rounded-lg border border-orange-200">
-                    <p className="text-xs font-bold text-orange-700 mb-2">📅 Braki kadrowe jutro</p>
+                    <p className="text-xs font-bold text-orange-700 mb-2">📅 Braki kadrowe jutro ({hallStats.tomorrowAbsences.length})</p>
                     <div className="space-y-1">
-                      {hallStats.tomorrowAbsences.slice(0, 3).map((a, i) => (
-                        <p key={i} className="text-xs text-gray-700">
-                          {a.employee?.first_name} {a.employee?.last_name} - <span className="font-medium">{a.type === 'vacation' ? 'Urlop' : a.type === 'sick' ? 'L4' : a.type}</span>
-                        </p>
-                      ))}
+                      {(expandedAlerts.tomorrow ? hallStats.tomorrowAbsences : hallStats.tomorrowAbsences.slice(0, 3)).map((a, i) => {
+                        const hall = halls.find(h => h.id === a.employee?.hall_id);
+                        return (
+                          <p key={i} className="text-xs text-gray-700">
+                            <span className="text-gray-400 font-mono">{a.employee?.employee_number || '-'}</span> {a.employee?.first_name} {a.employee?.last_name}
+                            {hall && <span className="text-gray-400"> ({hall.name})</span>}
+                            {' - '}<span className="font-medium">{
+                              a.type === 'vacation' ? 'Urlop' : 
+                              a.type === 'sick' ? 'Chorobowe' : 
+                              a.type === 'unplanned' ? 'Nieplanowane' :
+                              a.type === 'care' ? 'Opieka' :
+                              a.type === 'blood' ? 'Krew' :
+                              a.type === 'unpaid' ? 'Bezpłatny' : a.type
+                            }</span>
+                          </p>
+                        );
+                      })}
                       {hallStats.tomorrowAbsences.length > 3 && (
-                        <p className="text-xs text-gray-500">+{hallStats.tomorrowAbsences.length - 3} więcej...</p>
+                        <button 
+                          onClick={() => setExpandedAlerts(prev => ({...prev, tomorrow: !prev.tomorrow}))}
+                          className="text-xs text-orange-600 hover:text-orange-800 font-medium mt-1 cursor-pointer"
+                        >
+                          {expandedAlerts.tomorrow ? '▲ Zwiń' : `▼ Pokaż więcej (+${hallStats.tomorrowAbsences.length - 3})`}
+                        </button>
                       )}
                     </div>
                   </div>
@@ -758,13 +880,26 @@ export default function Dashboard() {
                 {/* Recurring absences */}
                 {hallStats.recurringAbsences.length > 0 && (
                   <div className="bg-white p-3 rounded-lg border border-yellow-200">
-                    <p className="text-xs font-bold text-yellow-700 mb-2">🔄 Powtarzające się nieobecności</p>
+                    <p className="text-xs font-bold text-yellow-700 mb-2">🔄 Powtarzające się nieobecności ({hallStats.recurringAbsences.length})</p>
                     <div className="space-y-1">
-                      {hallStats.recurringAbsences.slice(0, 3).map((r, i) => (
-                        <p key={i} className="text-xs text-gray-700">
-                          {r.employee.first_name} {r.employee.last_name} - <span className="font-medium">{r.count}x {r.dayName}</span>
-                        </p>
-                      ))}
+                      {(expandedAlerts.recurring ? hallStats.recurringAbsences : hallStats.recurringAbsences.slice(0, 3)).map((r, i) => {
+                        const hall = halls.find(h => h.id === r.employee?.hall_id);
+                        return (
+                          <p key={i} className="text-xs text-gray-700">
+                            <span className="text-gray-400 font-mono">{r.employee?.employee_number || '-'}</span> {r.employee.first_name} {r.employee.last_name}
+                            {hall && <span className="text-gray-400"> ({hall.name})</span>}
+                            {' - '}<span className="font-medium">{r.count}x {r.dayName}</span>
+                          </p>
+                        );
+                      })}
+                      {hallStats.recurringAbsences.length > 3 && (
+                        <button 
+                          onClick={() => setExpandedAlerts(prev => ({...prev, recurring: !prev.recurring}))}
+                          className="text-xs text-yellow-600 hover:text-yellow-800 font-medium mt-1 cursor-pointer"
+                        >
+                          {expandedAlerts.recurring ? '▲ Zwiń' : `▼ Pokaż więcej (+${hallStats.recurringAbsences.length - 3})`}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -772,13 +907,26 @@ export default function Dashboard() {
                 {/* Vacation limit warnings */}
                 {hallStats.vacationLimitWarnings.length > 0 && (
                   <div className="bg-white p-3 rounded-lg border border-blue-200">
-                    <p className="text-xs font-bold text-blue-700 mb-2">🏖️ Limit urlopu</p>
+                    <p className="text-xs font-bold text-blue-700 mb-2">🏖️ Limit urlopu ({hallStats.vacationLimitWarnings.length})</p>
                     <div className="space-y-1">
-                      {hallStats.vacationLimitWarnings.slice(0, 3).map((w, i) => (
-                        <p key={i} className="text-xs text-gray-700">
-                          {w.employee.first_name} {w.employee.last_name} - <span className="font-medium text-blue-600">{w.used}/{w.limit} dni</span>
-                        </p>
-                      ))}
+                      {(expandedAlerts.vacation ? hallStats.vacationLimitWarnings : hallStats.vacationLimitWarnings.slice(0, 3)).map((w, i) => {
+                        const hall = halls.find(h => h.id === w.employee?.hall_id);
+                        return (
+                          <p key={i} className="text-xs text-gray-700">
+                            <span className="text-gray-400 font-mono">{w.employee?.employee_number || '-'}</span> {w.employee.first_name} {w.employee.last_name}
+                            {hall && <span className="text-gray-400"> ({hall.name})</span>}
+                            {' - '}<span className="font-medium text-blue-600">{w.used}/{w.limit} dni</span>
+                          </p>
+                        );
+                      })}
+                      {hallStats.vacationLimitWarnings.length > 3 && (
+                        <button 
+                          onClick={() => setExpandedAlerts(prev => ({...prev, vacation: !prev.vacation}))}
+                          className="text-xs text-blue-600 hover:text-blue-800 font-medium mt-1 cursor-pointer"
+                        >
+                          {expandedAlerts.vacation ? '▲ Zwiń' : `▼ Pokaż więcej (+${hallStats.vacationLimitWarnings.length - 3})`}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -793,7 +941,7 @@ export default function Dashboard() {
                 <div style={{ minWidth: '800px', height: '350px' }}>
                   <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={hallDailyData} margin={{ top: 50, right: 10, left: -20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                         <XAxis 
                           dataKey="date" 
                           interval={0} 
@@ -859,7 +1007,7 @@ export default function Dashboard() {
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={hallDailyData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis dataKey="date" interval={0} tick={{fontSize: 10}} angle={-45} textAnchor="end" height={60} />
                     <YAxis tick={{fontSize: 12}} />
                     <Tooltip />
@@ -894,10 +1042,10 @@ export default function Dashboard() {
               <h4 className="text-base font-medium text-gray-700 mb-4">Nadgodziny - Dziennie</h4>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={hallDailyData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <BarChart data={hallDailyData} margin={{ top: 20, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis dataKey="date" interval={0} tick={{fontSize: 10}} angle={-45} textAnchor="end" height={60} />
-                    <YAxis tick={{fontSize: 12}} />
+                    <YAxis tick={{fontSize: 12}} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.2)]} />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: '12px' }} />
                     <Bar dataKey="Nadgodziny" fill="#8b5cf6" name="Suma Nadgodzin (h)" radius={[4, 4, 0, 0]}>

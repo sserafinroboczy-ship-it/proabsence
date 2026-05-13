@@ -66,6 +66,27 @@ try {
   // Column might already exist, ignore error
 }
 
+// Migration: Add employee_number to employees if it doesn't exist
+try {
+  db.exec("ALTER TABLE employees ADD COLUMN employee_number TEXT");
+} catch (e) {
+  // Column might already exist, ignore error
+}
+
+// Migration: Add employee_number to users if it doesn't exist (for foreman/mistrz)
+try {
+  db.exec("ALTER TABLE users ADD COLUMN employee_number TEXT");
+} catch (e) {
+  // Column might already exist, ignore error
+}
+
+// Migration: Add employment_type to employees (Etat, Agencja, DG)
+try {
+  db.exec("ALTER TABLE employees ADD COLUMN employment_type TEXT DEFAULT 'Etat'");
+} catch (e) {
+  // Column might already exist, ignore error
+}
+
 // Migration: Translate existing logs to Polish
 try {
   db.exec(`
@@ -147,6 +168,59 @@ seedUser("super", superHash, "admin");
 seedUser("guest", bcrypt.hashSync("guest123", 10), "guest");
 
 // Migration: Add note_reads table if not exists (already there but keeping flow)
+
+// Migration: Add settings table for hour limits
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT UNIQUE NOT NULL,
+      value TEXT NOT NULL
+    )
+  `);
+  // Insert default hour limits if not exist
+  db.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('hours_limit_agencja', '200')`);
+  db.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('hours_limit_dg', '200')`);
+} catch (e) {
+  // Table might already exist
+}
+
+// Migration: Add hours_limit to employees (individual limit override)
+try {
+  db.exec("ALTER TABLE employees ADD COLUMN hours_limit INTEGER");
+} catch (e) {
+  // Column might already exist, ignore error
+}
+
+// Migration: Add notification_emails table
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+} catch (e) {
+  // Table might already exist
+}
+
+// Migration: Add limit_exceeded_notifications table (to track sent notifications)
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS limit_exceeded_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      month TEXT NOT NULL,
+      sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(employee_id, month),
+      FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )
+  `);
+} catch (e) {
+  // Table might already exist
+}
+
 // Seed some sample data if empty
 const hallsCount = db.prepare("SELECT COUNT(*) as count FROM halls").get() as any;
 if (hallsCount.count === 0) {

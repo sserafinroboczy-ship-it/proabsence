@@ -15,56 +15,104 @@
 }
 
 /* Sticky columns overlay for attendance table */
-.sticky-col-1 {
+.sticky-col-0 {
   position: sticky;
   left: 0;
   z-index: 20;
   background-color: white;
 }
 
-.sticky-col-2 {
+.sticky-col-1 {
   position: sticky;
-  left: 150px;
+  left: 60px;
   z-index: 20;
   background-color: white;
 }
 
+.sticky-col-2 {
+  position: sticky;
+  left: 210px;
+  z-index: 20;
+  background-color: white;
+}
+
+.sticky-col-forma {
+  position: sticky;
+  left: 310px;
+  z-index: 20;
+  background-color: white !important;
+}
+
 .sticky-col-3 {
   position: sticky;
-  left: 250px;
+  left: 370px;
+  z-index: 20;
+  background-color: white !important;
+}
+
+.sticky-col-4 {
+  position: sticky;
+  left: 410px;
   z-index: 20;
   background-color: white !important;
   box-shadow: 4px 0 8px -4px rgba(0,0,0,0.2);
 }
 
+.sticky-col-0,
 .sticky-col-1,
-.sticky-col-2 {
+.sticky-col-2,
+.sticky-col-forma,
+.sticky-col-3 {
   background-color: white !important;
 }
 
+.sticky-col-0-header,
 .sticky-col-1-header,
 .sticky-col-2-header,
-.sticky-col-3-header {
+.sticky-col-forma-header,
+.sticky-col-3-header,
+.sticky-col-4-header {
   background-color: rgb(243 244 246) !important;
+}
+
+.sticky-col-0-header {
+  position: sticky;
+  left: 0;
+  z-index: 20;
+  background-color: rgb(243 244 246);
 }
 
 .sticky-col-1-header {
   position: sticky;
-  left: 0;
+  left: 60px;
   z-index: 20;
   background-color: rgb(243 244 246);
 }
 
 .sticky-col-2-header {
   position: sticky;
-  left: 150px;
+  left: 210px;
+  z-index: 20;
+  background-color: rgb(243 244 246);
+}
+
+.sticky-col-forma-header {
+  position: sticky;
+  left: 310px;
   z-index: 20;
   background-color: rgb(243 244 246);
 }
 
 .sticky-col-3-header {
   position: sticky;
-  left: 250px;
+  left: 370px;
+  z-index: 20;
+  background-color: rgb(243 244 246);
+}
+
+.sticky-col-4-header {
+  position: sticky;
+  left: 410px;
   z-index: 20;
   background-color: rgb(243 244 246);
   box-shadow: 4px 0 8px -4px rgba(0,0,0,0.2);
@@ -89,4 +137,13 @@
 
 .recharts-legend-wrapper {
   z-index: 1 !important;
+}
+
+/* Input month - cursor pointer na całym elemencie włącznie z ikoną kalendarza */
+input[type="month"] {
+  cursor: pointer !important;
+}
+
+input[type="month"]::-webkit-calendar-picker-indicator {
+  cursor: pointer !important;
 }

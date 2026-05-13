@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -6,11 +7,19 @@ import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import db from "./src/db/setup.ts";
+import { sendLimitExceededEmail, LimitExceededData } from "./src/lib/mailer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-for-dev";
+
+// Funkcja do generowania lokalnej daty/czasu dla logów
+function getLocalTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
 
 // === BACKUP SYSTEM ===
 const BACKUP_DIR = path.join(process.cwd(), "backups");
@@ -33,6 +42,9 @@ function createBackup() {
   try {
     if (fs.existsSync(sourcePath)) {
       fs.copyFileSync(sourcePath, backupPath);
+      // Ustaw datę modyfikacji na aktualny czas (copyFileSync kopiuje oryginalną datę)
+      const now = new Date();
+      fs.utimesSync(backupPath, now, now);
       console.log(`✅ Backup utworzony: ${backupPath}`);
       cleanOldBackups();
     } else {
@@ -46,14 +58,14 @@ function createBackup() {
 function cleanOldBackups() {
   const files = fs.readdirSync(BACKUP_DIR)
     .filter(f => f.startsWith("database_") && f.endsWith(".sqlite"))
-    .map(f => ({ name: f, time: fs.statSync(path.join(BACKUP_DIR, f)).mtime.getTime() }))
-    .sort((a, b) => b.time - a.time);
+    // Sortuj po nazwie pliku (zawiera timestamp ISO) - najnowsze pierwsze
+    .sort((a, b) => b.localeCompare(a));
   
   // Usuń stare backupy (zostaw tylko MAX_BACKUPS)
   if (files.length > MAX_BACKUPS) {
     files.slice(MAX_BACKUPS).forEach(f => {
-      fs.unlinkSync(path.join(BACKUP_DIR, f.name));
-      console.log(`🗑️ Usunięto stary backup: ${f.name}`);
+      fs.unlinkSync(path.join(BACKUP_DIR, f));
+      console.log(`🗑️ Usunięto stary backup: ${f}`);
     });
   }
 }
@@ -70,7 +82,7 @@ function startBackupScheduler() {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
 
@@ -128,8 +140,8 @@ async function startServer() {
     const hash = bcrypt.hashSync(newPassword, 10);
     db.prepare("UPDATE users SET password = ?, force_password_change = 0 WHERE id = ?").run(hash, req.user.id);
     
-    db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-      req.user.id, "ZMIANA_HASLA", `Użytkownik zmienił swoje hasło`
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "ZMIANA_HASLA", `Użytkownik zmienił swoje hasło`, getLocalTimestamp()
     );
     
     res.json({ success: true });
@@ -144,23 +156,23 @@ async function startServer() {
   // Users CRUD
   app.get("/api/users", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const users = db.prepare("SELECT id, username, role, hall_id FROM users").all();
+    const users = db.prepare("SELECT id, username, role, hall_id, employee_number FROM users").all();
     res.json(users);
   });
 
   app.post("/api/users", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const { username, password, role, hall_id } = req.body;
+    const { username, password, role, hall_id, employee_number } = req.body;
     try {
       const hash = bcrypt.hashSync(password, 10);
-      const stmt = db.prepare("INSERT INTO users (username, password, role, hall_id, force_password_change) VALUES (?, ?, ?, ?, 1)");
-      const info = stmt.run(username, hash, role, hall_id || null);
+      const stmt = db.prepare("INSERT INTO users (username, password, role, hall_id, force_password_change, employee_number) VALUES (?, ?, ?, ?, 1, ?)");
+      const info = stmt.run(username, hash, role, hall_id || null, employee_number || null);
       
-      db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-        req.user.id, "UTWORZONO_UZYTKOWNIKA", `Utworzono użytkownika ${username}`
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "UTWORZONO_UZYTKOWNIKA", `Utworzono użytkownika ${username}`, getLocalTimestamp()
       );
       
-      res.json({ id: info.lastInsertRowid, username, role, hall_id });
+      res.json({ id: info.lastInsertRowid, username, role, hall_id, employee_number });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -176,8 +188,8 @@ async function startServer() {
       const hash = bcrypt.hashSync("password123", 10);
       db.prepare("UPDATE users SET password = ?, force_password_change = 1 WHERE id = ?").run(hash, req.params.id);
       
-      db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-        req.user.id, "RESET_HASLA", `Zresetowano hasło dla użytkownika: ${targetUsername}`
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "RESET_HASLA", `Zresetowano hasło dla użytkownika: ${targetUsername}`, getLocalTimestamp()
       );
       
       res.json({ success: true, message: "Hasło zresetowane do: password123" });
@@ -202,8 +214,8 @@ async function startServer() {
       db.prepare("DELETE FROM logs WHERE user_id = ?").run(req.params.id);
 
       db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
-      db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-        req.user.id, "USUNIETO_UZYTKOWNIKA", `Usunięto użytkownika: ${deletedUsername}`
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "USUNIETO_UZYTKOWNIKA", `Usunięto użytkownika: ${deletedUsername}`, getLocalTimestamp()
       );
       res.json({ success: true });
     } catch (err: any) {
@@ -224,8 +236,8 @@ async function startServer() {
     const stmt = db.prepare("INSERT INTO halls (name, is_active) VALUES (?, ?)");
     const info = stmt.run(name, is_active ? 1 : 0);
     
-    db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-      req.user.id, "UTWORZONO_HALE", `Utworzono halę ${name}`
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "UTWORZONO_HALE", `Utworzono halę ${name}`, getLocalTimestamp()
     );
     res.json({ id: info.lastInsertRowid, name, is_active });
   });
@@ -235,8 +247,8 @@ async function startServer() {
     const { name, is_active } = req.body;
     db.prepare("UPDATE halls SET name = ?, is_active = ? WHERE id = ?").run(name, is_active ? 1 : 0, req.params.id);
     
-    db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-      req.user.id, "AKTUALIZACJA_HALI", `Zaktualizowano halę ID ${req.params.id}`
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "AKTUALIZACJA_HALI", `Zaktualizowano halę ID ${req.params.id}`, getLocalTimestamp()
     );
     res.json({ success: true });
   });
@@ -258,7 +270,7 @@ async function startServer() {
     const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
-    const { first_name, last_name, hall_id, position } = req.body;
+    const { first_name, last_name, hall_id, position, employee_number, employment_type } = req.body;
     
     // Foreman can only add to their own hall
     if (isForeman && req.user.hall_id) {
@@ -267,11 +279,11 @@ async function startServer() {
       }
     }
 
-    const stmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position) VALUES (?, ?, ?, ?)");
-    const info = stmt.run(first_name, last_name, hall_id, position);
+    const stmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position, employee_number, employment_type) VALUES (?, ?, ?, ?, ?, ?)");
+    const info = stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat');
     
-    db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-      req.user.id, "UTWORZONO_PRACOWNIKA", `Dodano pracownika ${first_name} ${last_name} (Hala ID: ${hall_id})`
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "UTWORZONO_PRACOWNIKA", `Dodano pracownika ${first_name} ${last_name} (Hala ID: ${hall_id})`, getLocalTimestamp()
     );
     res.json({ id: info.lastInsertRowid });
   });
@@ -280,22 +292,36 @@ async function startServer() {
     const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
-    const { first_name, last_name, hall_id, position } = req.body;
+    const { first_name, last_name, hall_id, position, employee_number, employment_type } = req.body;
     
-    // Foreman check
+    // Pobierz aktualną halę pracownika
+    const existing = db.prepare("SELECT hall_id, first_name, last_name FROM employees WHERE id = ?").get(req.params.id) as any;
+    const oldHallId = existing?.hall_id;
+    const isTransfer = oldHallId !== parseInt(hall_id);
+    
+    // Foreman check - może edytować tylko pracowników ze swojej hali
+    // ALE może ich przenosić na inne hale
     if (isForeman && req.user.hall_id) {
-      const existing = db.prepare("SELECT hall_id FROM employees WHERE id = ?").get(req.params.id) as any;
-      if (existing.hall_id !== req.user.hall_id || parseInt(hall_id) !== parseInt(req.user.hall_id)) {
+      if (existing.hall_id !== req.user.hall_id) {
         return res.status(403).json({ error: "Możesz edytować tylko pracowników ze swojej hali." });
       }
     }
 
-    const stmt = db.prepare("UPDATE employees SET first_name = ?, last_name = ?, hall_id = ?, position = ? WHERE id = ?");
-    stmt.run(first_name, last_name, hall_id, position, req.params.id);
+    const stmt = db.prepare("UPDATE employees SET first_name = ?, last_name = ?, hall_id = ?, position = ?, employee_number = ?, employment_type = ? WHERE id = ?");
+    stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', req.params.id);
     
-    db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-      req.user.id, "AKTUALIZACJA_PRACOWNIKA", `Zaktualizowano pracownika ID ${req.params.id}`
-    );
+    // Logowanie - różne dla przeniesienia i zwykłej edycji
+    if (isTransfer) {
+      const oldHall = db.prepare("SELECT name FROM halls WHERE id = ?").get(oldHallId) as any;
+      const newHall = db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any;
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "PRZENIESIENIE_PRACOWNIKA", `Przeniesiono: ${existing.first_name} ${existing.last_name} | Z hali: ${oldHall?.name} | Na halę: ${newHall?.name}`, getLocalTimestamp()
+      );
+    } else {
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "AKTUALIZACJA_PRACOWNIKA", `Zaktualizowano pracownika ID ${req.params.id}`, getLocalTimestamp()
+      );
+    }
     res.json({ success: true });
   });
 
@@ -318,8 +344,8 @@ async function startServer() {
       const stmt = db.prepare("DELETE FROM employees WHERE id = ?");
       stmt.run(req.params.id);
       
-      db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-        req.user.id, "USUNIETO_PRACOWNIKA", `Usunięto pracownika ID ${req.params.id}`
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "USUNIETO_PRACOWNIKA", `Usunięto pracownika ID ${req.params.id}`, getLocalTimestamp()
       );
       res.json({ success: true });
     } catch (err: any) {
@@ -372,8 +398,8 @@ async function startServer() {
     const empDetails = db.prepare("SELECT first_name, last_name FROM employees WHERE id = ?").get(employee_id) as any;
     const empName = empDetails ? `${empDetails.first_name} ${empDetails.last_name}` : `ID ${employee_id}`;
 
-    db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-      req.user.id, "AKTUALIZACJA_ABSENCJI", `Zaktualizowano absencję pracownika ${empName} w dniu ${date}`
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "AKTUALIZACJA_ABSENCJI", `Zaktualizowano absencję pracownika ${empName} w dniu ${date}`, getLocalTimestamp()
     );
     res.json({ success: true });
   });
@@ -480,15 +506,176 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Settings API
+  app.get("/api/settings", authenticate, (req: any, res) => {
+    const settings = db.prepare("SELECT key, value FROM settings").all();
+    const result: any = {};
+    settings.forEach((s: any) => {
+      result[s.key] = s.value;
+    });
+    res.json(result);
+  });
+
+  app.put("/api/settings", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    
+    const { key, value } = req.body;
+    if (!key || value === undefined) {
+      return res.status(400).json({ error: "Key and value required" });
+    }
+    
+    // Sprawdź czy klucz istnieje
+    const existing = db.prepare("SELECT id FROM settings WHERE key = ?").get(key);
+    if (existing) {
+      db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(value.toString(), key);
+    } else {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(key, value.toString());
+    }
+    
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "ZMIANA_USTAWIEN", `Zmieniono ${key} na ${value}`, getLocalTimestamp()
+    );
+    res.json({ success: true });
+  });
+
+  // Notification Emails API
+  app.get("/api/notification-emails", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const emails = db.prepare("SELECT * FROM notification_emails ORDER BY created_at DESC").all();
+    res.json(emails);
+  });
+
+  app.post("/api/notification-emails", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const { email } = req.body;
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: "Nieprawidłowy adres email" });
+    }
+    try {
+      const info = db.prepare("INSERT INTO notification_emails (email) VALUES (?)").run(email);
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "DODANO_EMAIL_POWIADOMIEN", `Dodano email: ${email}`, getLocalTimestamp()
+      );
+      res.json({ id: info.lastInsertRowid, email });
+    } catch (e: any) {
+      if (e.message?.includes('UNIQUE')) {
+        return res.status(400).json({ error: "Ten email już istnieje" });
+      }
+      throw e;
+    }
+  });
+
+  app.delete("/api/notification-emails/:id", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const emailRecord = db.prepare("SELECT email FROM notification_emails WHERE id = ?").get(req.params.id) as any;
+    db.prepare("DELETE FROM notification_emails WHERE id = ?").run(req.params.id);
+    if (emailRecord) {
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "USUNIETO_EMAIL_POWIADOMIEN", `Usunięto email: ${emailRecord.email}`, getLocalTimestamp()
+      );
+    }
+    res.json({ success: true });
+  });
+
+  // Check and send limit exceeded notifications
+  app.post("/api/check-limit-notifications", authenticate, async (req: any, res) => {
+    const { employee_id, month, hours_used, hours_limit } = req.body;
+    
+    if (hours_used <= hours_limit) {
+      return res.json({ sent: false, reason: "Limit nie przekroczony" });
+    }
+
+    // Najpierw spróbuj zapisać - to zapobiega race condition (duplikatom)
+    // Jeśli zapis się nie uda (UNIQUE constraint), znaczy że już wysłano
+    try {
+      db.prepare(
+        "INSERT INTO limit_exceeded_notifications (employee_id, month) VALUES (?, ?)"
+      ).run(employee_id, month);
+    } catch (e: any) {
+      if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return res.json({ sent: false, reason: "Powiadomienie już wysłane" });
+      }
+      throw e;
+    }
+
+    // Pobierz dane pracownika i hali
+    const employee = db.prepare(`
+      SELECT e.*, h.name as hall_name 
+      FROM employees e 
+      LEFT JOIN halls h ON e.hall_id = h.id 
+      WHERE e.id = ?
+    `).get(employee_id) as any;
+
+    if (!employee) {
+      return res.status(404).json({ error: "Pracownik nie znaleziony" });
+    }
+
+    // Pobierz listę emaili do powiadomień
+    const emails = db.prepare("SELECT email FROM notification_emails").all() as any[];
+    
+    if (emails.length === 0) {
+      return res.json({ sent: false, reason: "Brak skonfigurowanych emaili" });
+    }
+
+    const recipients = emails.map(e => e.email);
+    const hoursExceeded = hours_used - hours_limit;
+
+    const data: LimitExceededData = {
+      employeeNumber: employee.employee_number || '-',
+      firstName: employee.first_name,
+      lastName: employee.last_name,
+      hallName: employee.hall_name || 'Nieprzypisana',
+      employmentType: employee.employment_type,
+      hoursLimit: hours_limit,
+      hoursUsed: hours_used,
+      hoursExceeded: hoursExceeded,
+      month: month
+    };
+
+    const sent = await sendLimitExceededEmail(recipients, data);
+
+    if (sent) {
+      // Zapis do limit_exceeded_notifications już został wykonany na początku
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, 
+        "WYSLANO_POWIADOMIENIE_LIMIT", 
+        `Wysłano powiadomienie o przekroczeniu limitu: ${employee.first_name} ${employee.last_name} (${hoursExceeded}h ponad limit)`, 
+        getLocalTimestamp()
+      );
+    } else {
+      // Jeśli mail się nie wysłał, usuń wpis z bazy aby można było spróbować ponownie
+      db.prepare("DELETE FROM limit_exceeded_notifications WHERE employee_id = ? AND month = ?").run(employee_id, month);
+    }
+
+    res.json({ sent, recipients: sent ? recipients : [] });
+  });
+
   // Logs
   app.get("/api/logs", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const logs = db.prepare(`
-      SELECT l.*, u.username 
-      FROM logs l 
-      LEFT JOIN users u ON l.user_id = u.id 
-      ORDER BY l.timestamp DESC
-    `).all();
+    
+    const { month } = req.query; // format: YYYY-MM
+    
+    let logs;
+    if (month) {
+      // Filtruj po miesiącu - timestamp format: "YYYY-MM-DD HH:MM:SS"
+      const startDate = `${month}-01`;
+      const endDate = `${month}-31 23:59:59`;
+      logs = db.prepare(`
+        SELECT l.*, u.username 
+        FROM logs l 
+        LEFT JOIN users u ON l.user_id = u.id 
+        WHERE l.timestamp >= ? AND l.timestamp <= ?
+        ORDER BY l.timestamp DESC
+      `).all(startDate, endDate);
+    } else {
+      logs = db.prepare(`
+        SELECT l.*, u.username 
+        FROM logs l 
+        LEFT JOIN users u ON l.user_id = u.id 
+        ORDER BY l.timestamp DESC
+      `).all();
+    }
     res.json(logs);
   });
 
@@ -501,10 +688,12 @@ async function startServer() {
         .filter(f => f.startsWith("database_") && f.endsWith(".sqlite"))
         .map(f => {
           const stats = fs.statSync(path.join(BACKUP_DIR, f));
+          // Użyj birthtime (czas utworzenia pliku) zamiast mtime (czas modyfikacji)
+          // mtime jest kopiowany z oryginalnego pliku przy fs.copyFileSync
           return {
             name: f,
             size: Math.round(stats.size / 1024) + " KB",
-            created: stats.mtime.toISOString()
+            created: stats.birthtime.toISOString()
           };
         })
         .sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
@@ -518,8 +707,8 @@ async function startServer() {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
     try {
       createBackup();
-      db.prepare("INSERT INTO logs (user_id, action, details) VALUES (?, ?, ?)").run(
-        req.user.id, "BACKUP_RECZNY", "Utworzono ręczny backup bazy danych"
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "BACKUP_RECZNY", "Utworzono ręczny backup bazy danych", getLocalTimestamp()
       );
       res.json({ success: true, message: "Backup utworzony pomyślnie" });
     } catch (err: any) {

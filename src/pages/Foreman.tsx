@@ -4,7 +4,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isSameD
 import { pl } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from "recharts";
 import * as XLSX from "xlsx";
-import { Plus, Trash2, UserPlus, X } from "lucide-react";
+import { Plus, Trash2, UserPlus, X, ArrowLeftRight } from "lucide-react";
 
 const isHoliday = (date: Date) => {
   const month = date.getMonth() + 1;
@@ -27,12 +27,21 @@ export default function Foreman({ user }: { user: any }) {
   const [error, setError] = useState<string | null>(null);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<number | null>(null);
-  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "" });
+  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat" });
+  const [transferringEmployeeId, setTransferringEmployeeId] = useState<number | null>(null);
+  const [allHalls, setAllHalls] = useState<any[]>([]);
   const [scrollPositions, setScrollPositions] = useState<Record<number, number>>({});
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [settings, setSettings] = useState<{hours_limit_agencja: number, hours_limit_dg: number}>({
+    hours_limit_agencja: 200,
+    hours_limit_dg: 200
+  });
 
   useEffect(() => {
     fetchApi("/api/halls").then(data => {
+      // Zapisz wszystkie aktywne hale (do przenoszenia pracowników)
+      setAllHalls(data.filter((h: any) => h.is_active));
+      
       const availableHalls = (user.role === "admin" || user.role === "mistrz") && !user.hall_id
         ? data.filter((h: any) => h.is_active)
         : data.filter((h: any) => h.id === user.hall_id && h.is_active);
@@ -52,6 +61,24 @@ export default function Foreman({ user }: { user: any }) {
       setAbsences(data);
     }
   };
+
+  // Pobierz ustawienia limitów godzin
+  const loadSettings = () => {
+    fetchApi("/api/settings").then(data => {
+      setSettings({
+        hours_limit_agencja: parseInt(data.hours_limit_agencja) || 200,
+        hours_limit_dg: parseInt(data.hours_limit_dg) || 200
+      });
+    });
+  };
+
+  useEffect(() => {
+    loadSettings();
+    // Odświeżaj ustawienia gdy okno uzyska focus (powrót z panelu admina)
+    const handleFocus = () => loadSettings();
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
 
   useEffect(() => {
     if (activeHallId) {
@@ -143,6 +170,29 @@ export default function Foreman({ user }: { user: any }) {
         method: "POST",
         body: JSON.stringify(newRecord)
       });
+
+      // Sprawdź czy pracownik przekroczył limit (tylko dla Agencja/DG)
+      const employee = employees.find(e => e.id === employeeId);
+      if (employee && (employee.employment_type === 'Agencja' || employee.employment_type === 'DG')) {
+        const hoursLimit = employee.employment_type === 'Agencja' ? settings.hours_limit_agencja : settings.hours_limit_dg;
+        
+        // Oblicz sumę godzin dla tego pracownika w tym miesiącu
+        const empAbsences = newAbsences.filter(a => a.employee_id === employeeId && a.type === 'present');
+        const totalHours = empAbsences.reduce((sum, a) => sum + (a.working_hours || 0) + (a.overtime_hours || 0), 0);
+        
+        if (totalHours > hoursLimit) {
+          // Wyślij powiadomienie o przekroczeniu limitu
+          fetchApi("/api/check-limit-notifications", {
+            method: "POST",
+            body: JSON.stringify({
+              employee_id: employeeId,
+              month: selectedMonth,
+              hours_used: totalHours,
+              hours_limit: hoursLimit
+            })
+          }).catch(() => {}); // Ignoruj błędy - to jest w tle
+        }
+      }
     } catch (err: any) {
       setError(err.message || "Błąd zapisu danych");
       loadAbsences(); // Revert on error
@@ -163,7 +213,7 @@ export default function Foreman({ user }: { user: any }) {
         body: JSON.stringify({ ...newEmployee, hall_id: activeHallId })
       });
       setIsAddingEmployee(false);
-      setNewEmployee({ first_name: "", last_name: "", position: "" });
+      setNewEmployee({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat" });
       fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
     } catch (err: any) {
       setError(err.message || "Błąd dodawania pracownika");
@@ -180,6 +230,34 @@ export default function Foreman({ user }: { user: any }) {
     }
   };
 
+  const handleTransferEmployee = async (empId: number, targetHallId: number) => {
+    try {
+      const emp = employees.find(e => e.id === empId);
+      if (!emp) return;
+      
+      await fetchApi(`/api/employees/${empId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          first_name: emp.first_name,
+          last_name: emp.last_name,
+          position: emp.position,
+          employee_number: emp.employee_number,
+          employment_type: emp.employment_type,
+          hall_id: targetHallId
+        })
+      });
+      
+      // Usuń pracownika z aktualnej listy (został przeniesiony)
+      setEmployees(employees.filter(e => e.id !== empId));
+      setTransferringEmployeeId(null);
+      
+      // Odśwież dane nieobecności
+      loadAbsences();
+    } catch (err: any) {
+      setError(err.message || "Błąd przenoszenia pracownika");
+    }
+  };
+
   if (user.role === "guest") return <div className="p-8 text-gray-500">Brak dostępu</div>;
 
   const daysInMonth = eachDayOfInterval({
@@ -193,6 +271,7 @@ export default function Foreman({ user }: { user: any }) {
   let totalUnplanned = 0;
   let totalCare = 0;
   let totalBlood = 0;
+  let totalUnpaid = 0;
   let totalPresentDays = 0;
   let hallTotalHoursRaw = 0;    // Suma godzin bez odejmowania przerw
   let hallTotalHours = 0;       // Suma godzin z odjętymi przerwami (-0.5h/dzień)
@@ -208,17 +287,33 @@ export default function Foreman({ user }: { user: any }) {
     else if (a.type === "unplanned") totalUnplanned++;
     else if (a.type === "care") totalCare++;
     else if (a.type === "blood") totalBlood++;
+    else if (a.type === "unpaid") totalUnpaid++;
     else if (a.type === "present") {
-      // Sumuj godziny pracy
+      const emp = employees.find(e => e.id === a.employee_id);
+      const isAgencyOrDG = emp?.employment_type === 'Agencja' || emp?.employment_type === 'DG';
+      
       const workingHours = a.working_hours || 0;
-      if (workingHours > 0) {
-        hallTotalHoursRaw += workingHours;                    // Suma surowa
-        hallTotalHours += Math.max(0, workingHours - 0.5);    // Odejmij 30 min przerwy
+      const overtimeHours = a.overtime_hours || 0;
+      
+      if (isAgencyOrDG) {
+        // Agencja/DG: nadgodziny traktowane jako normalne godziny
+        const totalHours = workingHours + overtimeHours;
+        if (totalHours > 0) {
+          hallTotalHoursRaw += totalHours;
+          hallTotalHours += Math.max(0, totalHours - 0.5);
+        }
+        // Nie dodajemy do hallTotalOvertime
+      } else {
+        // Etat: standardowa logika
+        if (workingHours > 0) {
+          hallTotalHoursRaw += workingHours;
+          hallTotalHours += Math.max(0, workingHours - 0.5);
+        }
+        hallTotalOvertime += overtimeHours;
       }
-      hallTotalOvertime += (a.overtime_hours || 0);
       
       // Liczymy tylko obecności w dni robocze do frekwencji
-      if ((a.working_hours > 0 || a.overtime_hours > 0)) {
+      if ((workingHours > 0 || overtimeHours > 0)) {
         const date = new Date(a.date);
         if (!isFreeDay(date)) {
           totalPresentDays++;
@@ -265,13 +360,16 @@ export default function Foreman({ user }: { user: any }) {
     
     const data = employees.map(emp => {
       const row: any = {
+        "Nr": emp.employee_number || '',
         "Pracownik": `${emp.first_name} ${emp.last_name}`,
-        "Stanowisko": emp.position
+        "Stanowisko": emp.position,
+        "Forma": emp.employment_type || 'Etat'
       };
       
       let totalHours = 0;
       let totalOvertime = 0;
       let sumUW = 0, sumCH = 0, sumNZ = 0, sumOP = 0, sumKR = 0, sumBL = 0;
+      const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
 
       daysInMonth.forEach(day => {
         const dateStr = format(day, "yyyy-MM-dd");
@@ -281,8 +379,11 @@ export default function Foreman({ user }: { user: any }) {
         const absence = absences.find(a => a.employee_id === emp.id && a.date === dateStr);
         if (absence) {
           if (absence.type === "present") {
-            totalHours += (absence.working_hours || 0);
-            totalOvertime += (absence.overtime_hours || 0);
+            const wh = absence.working_hours || 0;
+            const oh = absence.overtime_hours || 0;
+            // Agencja/DG: nadgodziny doliczane do godzin
+            totalHours += wh + (isAgencyOrDG ? oh : 0);
+            totalOvertime += isAgencyOrDG ? 0 : oh;
           } else if (absence.type === "vacation") sumUW++;
           else if (absence.type === "sick") sumCH++;
           else if (absence.type === "unplanned") sumNZ++;
@@ -292,6 +393,12 @@ export default function Foreman({ user }: { user: any }) {
         }
       });
       
+      // Oblicz limit dla eksportu
+      const hoursLimit = emp.employment_type === 'Agencja' ? settings.hours_limit_agencja :
+                         emp.employment_type === 'DG' ? settings.hours_limit_dg : null;
+      const remainingLimit = hoursLimit !== null ? hoursLimit - totalHours : null;
+      
+      row["Limit"] = remainingLimit !== null ? remainingLimit : '-';
       row["Suma Godz"] = totalHours;
       row["Suma Nadg"] = totalOvertime;
       row["UW"] = sumUW;
@@ -359,6 +466,10 @@ export default function Foreman({ user }: { user: any }) {
           <div className="flex items-center gap-2 bg-rose-50 text-rose-800 px-4 py-2 rounded-lg">
             <span className="text-sm font-medium">Krew:</span>
             <span className="font-bold">{totalBlood}</span>
+          </div>
+          <div className="flex items-center gap-2 bg-gray-100 text-gray-800 px-4 py-2 rounded-lg">
+            <span className="text-sm font-medium">Bezpłatny:</span>
+            <span className="font-bold">{totalUnpaid}</span>
           </div>
           <div className="flex items-center gap-2 bg-slate-100 text-slate-800 px-4 py-2 rounded-lg">
             <span className="text-sm font-medium">Godziny:</span>
@@ -431,9 +542,12 @@ export default function Foreman({ user }: { user: any }) {
           <table className="w-full text-left text-sm attendance-table">
             <thead>
               <tr className="bg-gray-100 text-gray-600 border-b border-gray-200">
+                <th className="p-2 font-semibold min-w-[60px] w-[60px] sticky-col-0-header">Nr</th>
                 <th className="p-2 font-semibold min-w-[150px] w-[150px] sticky-col-1-header">Pracownik</th>
                 <th className="p-2 font-semibold min-w-[100px] w-[100px] sticky-col-2-header">Stanowisko</th>
-                <th className="p-2 font-semibold text-center min-w-[50px] w-[50px] sticky-col-3-header">Akcja</th>
+                <th className="p-2 font-semibold min-w-[60px] w-[60px] text-center sticky-col-forma-header" title="Forma zatrudnienia">Forma</th>
+                <th className="p-2 font-semibold text-center min-w-[40px] w-[40px] sticky-col-3-header" title="Przesuń na inną halę">↔</th>
+                <th className="p-2 font-semibold text-center min-w-[50px] w-[50px] sticky-col-4-header">Akcja</th>
                 {daysInMonth.map(day => {
                   const isWknd = isFreeDay(day);
                   const isToday = isSameDay(day, new Date());
@@ -448,6 +562,7 @@ export default function Foreman({ user }: { user: any }) {
                     </th>
                   );
                 })}
+                <th className="p-2 font-semibold text-center border-r border-gray-200 bg-amber-50 text-amber-800" title="Pozostały limit godzin (Agencja/DG)">Limit</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-blue-50">Suma Godz</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-purple-50">Suma Nadg</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-blue-100 text-blue-800" title="Urlop Wypoczynkowy">UW</th>
@@ -461,8 +576,16 @@ export default function Foreman({ user }: { user: any }) {
             <tbody className="divide-y divide-gray-200">
               {employees.map(emp => {
                 const empAbsences = absences.filter(a => a.employee_id === emp.id);
-                const totalHours = empAbsences.reduce((sum, a) => sum + (a.type === "present" ? (a.working_hours || 0) : 0), 0);
-                const totalOvertime = empAbsences.reduce((sum, a) => sum + (a.type === "present" ? (a.overtime_hours || 0) : 0), 0);
+                const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+                
+                // Dla Agencja/DG: nadgodziny doliczane do godzin, nie do nadgodzin
+                const totalHours = empAbsences.reduce((sum, a) => {
+                  if (a.type !== "present") return sum;
+                  const wh = a.working_hours || 0;
+                  const oh = a.overtime_hours || 0;
+                  return sum + wh + (isAgencyOrDG ? oh : 0);
+                }, 0);
+                const totalOvertime = isAgencyOrDG ? 0 : empAbsences.reduce((sum, a) => sum + (a.type === "present" ? (a.overtime_hours || 0) : 0), 0);
                 
                 const sumUW = empAbsences.filter(a => a.type === "vacation").length;
                 const sumCH = empAbsences.filter(a => a.type === "sick").length;
@@ -470,16 +593,44 @@ export default function Foreman({ user }: { user: any }) {
                 const sumOP = empAbsences.filter(a => a.type === "care").length;
                 const sumKR = empAbsences.filter(a => a.type === "blood").length;
                 const sumBL = empAbsences.filter(a => a.type === "unpaid").length;
+                
+                // Oblicz pozostały limit godzin dla Agencja/DG
+                const hoursLimit = emp.employment_type === 'Agencja' ? settings.hours_limit_agencja :
+                                   emp.employment_type === 'DG' ? settings.hours_limit_dg : null;
+                const remainingLimit = hoursLimit !== null ? hoursLimit - totalHours : null;
+                const isLimitCritical = remainingLimit !== null && remainingLimit < 20;
 
                 return (
                   <tr key={emp.id} className="group hover:bg-gray-50 transition-colors">
+                    <td className="p-2 text-gray-800 min-w-[60px] w-[60px] sticky-col-0 group-hover:!bg-gray-50">
+                      {emp.employee_number || '-'}
+                    </td>
                     <td className="p-2 font-medium text-gray-800 min-w-[150px] w-[150px] sticky-col-1 group-hover:!bg-gray-50">
                       {emp.first_name} {emp.last_name}
                     </td>
                     <td className="p-2 text-gray-500 text-xs truncate min-w-[100px] w-[100px] sticky-col-2 group-hover:!bg-gray-50" title={emp.position}>
                       {emp.position}
                     </td>
-                    <td className="p-1 text-center min-w-[50px] w-[50px] sticky-col-3 group-hover:!bg-gray-50">
+                    <td className="p-1 text-center min-w-[60px] w-[60px] sticky-col-forma group-hover:!bg-gray-50">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        emp.employment_type === 'Agencja' ? 'bg-orange-100 text-orange-700' :
+                        emp.employment_type === 'DG' ? 'bg-purple-100 text-purple-700' :
+                        'bg-blue-100 text-blue-700'
+                      }`}>
+                        {emp.employment_type || 'Etat'}
+                      </span>
+                    </td>
+                    <td className="p-1 text-center min-w-[40px] w-[40px] sticky-col-3 group-hover:!bg-gray-50">
+                      <button 
+                        type="button"
+                        onClick={() => setTransferringEmployeeId(emp.id)}
+                        className="text-blue-400 hover:text-blue-600 p-1 cursor-pointer"
+                        title="Przesuń na inną halę"
+                      >
+                        <ArrowLeftRight className="w-4 h-4" />
+                      </button>
+                    </td>
+                    <td className="p-1 text-center min-w-[50px] w-[50px] sticky-col-4 group-hover:!bg-gray-50">
                       {confirmingDeleteId === emp.id ? (
                         <div className="flex flex-col items-center gap-1 p-0.5">
                           <button 
@@ -576,6 +727,15 @@ export default function Foreman({ user }: { user: any }) {
                         </td>
                       );
                     })}
+                    <td className={`p-2 text-center font-bold border-r border-gray-200 ${
+                      isLimitCritical 
+                        ? 'bg-red-500 text-white animate-pulse' 
+                        : remainingLimit !== null 
+                          ? 'bg-amber-50 text-amber-800' 
+                          : 'bg-gray-50 text-gray-400'
+                    }`} title={hoursLimit !== null ? `Limit: ${hoursLimit}h, Wykorzystano: ${totalHours}h` : 'Etat - brak limitu'}>
+                      {remainingLimit !== null ? remainingLimit : '-'}
+                    </td>
                     <td className="p-2 text-center font-bold text-blue-700 border-r border-gray-200 bg-blue-50/50">
                       {totalHours > 0 ? totalHours : ""}
                     </td>
@@ -629,12 +789,15 @@ export default function Foreman({ user }: { user: any }) {
           let blood = 0;
           let unpaid = 0;
           let totalHours = 0;
+          let overtime = 0;
 
           employees.forEach(emp => {
             const record = dayAbsences.find(a => a.employee_id === emp.id);
             if (!record) return;
             
             const type = record.type;
+            const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+            
             if (type === "present" && (record.working_hours > 0 || record.overtime_hours > 0)) {
               present++;
               // Rzeczywiste godziny pracy (working_hours + overtime_hours) minus 0.5h przerwy
@@ -647,6 +810,9 @@ export default function Foreman({ user }: { user: any }) {
             else if (type === "care") care++;
             else if (type === "blood") blood++;
             else if (type === "unpaid") unpaid++;
+            
+            // Nadgodziny tylko dla Etat (nie Agencja/DG)
+            if (record.overtime_hours && !isAgencyOrDG) overtime += record.overtime_hours;
           });
 
           return {
@@ -658,7 +824,8 @@ export default function Foreman({ user }: { user: any }) {
             Nieplanowane: unplanned,
             Opieka: care,
             Krew: blood,
-            Bezpłatny: unpaid
+            Bezpłatny: unpaid,
+            Nadgodziny: overtime
           };
         });
 
@@ -677,7 +844,7 @@ export default function Foreman({ user }: { user: any }) {
                 <div style={{ minWidth: '1000px', height: `${chartHeight}px`, position: 'relative' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 20, right: 10, left: -20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis 
                       dataKey="date" 
                       interval={0} 
@@ -774,7 +941,7 @@ export default function Foreman({ user }: { user: any }) {
                 <div style={{ minWidth: '1000px', height: '300px' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 30, right: 10, left: -20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
                     <XAxis 
                       dataKey="date" 
                       interval={0} 
@@ -826,6 +993,63 @@ export default function Foreman({ user }: { user: any }) {
               </div>
             </div>
           </div>
+
+          {/* Wykres Nadgodzin Dziennie */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <h3 className="text-lg font-semibold text-gray-800 mb-6 font-sans">Nadgodziny - Dziennie</h3>
+            <div className="overflow-x-auto overflow-y-hidden">
+              <div style={{ minWidth: '1000px', height: '300px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 30, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
+                    <XAxis 
+                      dataKey="date" 
+                      interval={0} 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fontSize: 12, fontWeight: 'bold', fill: '#475569' }} 
+                      angle={-45} 
+                      textAnchor="end" 
+                      height={80} 
+                    />
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fontSize: 13, fill: '#64748b' }} 
+                      dx={-10} 
+                      domain={[0, (dataMax: number) => Math.max(Math.ceil(dataMax * 1.2), 1)]} 
+                    />
+                    <Tooltip 
+                      cursor={{ fill: '#f9fafb' }}
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-white p-3 border border-gray-200 shadow-md rounded-lg">
+                              <p className="text-sm font-bold text-gray-700 mb-2 border-b pb-1">Data: {label}</p>
+                              <p className="text-sm text-purple-600 font-sans font-medium">Nadgodziny: <span className="font-bold underline">{data.Nadgodziny}h</span></p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend wrapperStyle={{ paddingTop: 10 }} />
+                    <Bar dataKey="Nadgodziny" fill="#8b5cf6" name="Suma Nadgodzin (h)" radius={[6, 6, 0, 0]} barSize={28}>
+                      <LabelList 
+                        dataKey="Nadgodziny" 
+                        position="top" 
+                        fill="#8b5cf6" 
+                        fontSize={13} 
+                        fontWeight="bold" 
+                        formatter={(val: any) => val > 0 ? `${val}h` : ''} 
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
         </div>
       );
       })()}
@@ -844,6 +1068,16 @@ export default function Foreman({ user }: { user: any }) {
               </button>
             </div>
             <form onSubmit={handleAddEmployee} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nr pracownika</label>
+                <input
+                  type="text"
+                  value={newEmployee.employee_number || ''}
+                  onChange={e => setNewEmployee({...newEmployee, employee_number: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="np. 001"
+                />
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Imię</label>
                 <input
@@ -876,6 +1110,44 @@ export default function Foreman({ user }: { user: any }) {
                   placeholder="np. Monter"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Forma zatrudnienia</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="employment_type"
+                      value="Etat"
+                      checked={newEmployee.employment_type === "Etat"}
+                      onChange={e => setNewEmployee({...newEmployee, employment_type: e.target.value})}
+                      className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">Etat</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="employment_type"
+                      value="Agencja"
+                      checked={newEmployee.employment_type === "Agencja"}
+                      onChange={e => setNewEmployee({...newEmployee, employment_type: e.target.value})}
+                      className="w-4 h-4 text-orange-600 focus:ring-orange-500"
+                    />
+                    <span className="text-sm text-gray-700">Agencja</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="employment_type"
+                      value="DG"
+                      checked={newEmployee.employment_type === "DG"}
+                      onChange={e => setNewEmployee({...newEmployee, employment_type: e.target.value})}
+                      className="w-4 h-4 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-700">DG</span>
+                  </label>
+                </div>
+              </div>
               <div className="pt-4 flex gap-3">
                 <button
                   type="button"
@@ -892,6 +1164,53 @@ export default function Foreman({ user }: { user: any }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal przenoszenia pracownika */}
+      {transferringEmployeeId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50">
+              <div>
+                <h3 className="text-xl font-bold text-gray-800">Przenieś Pracownika</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {employees.find(e => e.id === transferringEmployeeId)?.first_name}{' '}
+                  {employees.find(e => e.id === transferringEmployeeId)?.last_name}
+                </p>
+              </div>
+              <button 
+                onClick={() => setTransferringEmployeeId(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-4">Wybierz halę docelową:</p>
+              <div className="space-y-2">
+                {allHalls
+                  .filter(h => h.id !== activeHallId)
+                  .map(h => (
+                    <button
+                      key={h.id}
+                      onClick={() => handleTransferEmployee(transferringEmployeeId, h.id)}
+                      className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-all flex items-center justify-between group"
+                    >
+                      <span className="font-medium text-gray-800">{h.name}</span>
+                      <ArrowLeftRight className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
+                    </button>
+                  ))
+                }
+              </div>
+              <button
+                onClick={() => setTransferringEmployeeId(null)}
+                className="w-full mt-4 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Anuluj
+              </button>
+            </div>
           </div>
         </div>
       )}

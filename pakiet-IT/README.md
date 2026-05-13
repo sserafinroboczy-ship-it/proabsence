@@ -2,7 +2,8 @@
 
 System zarządzania obecnością pracowników na halach produkcyjnych.
 
-**Autor:** Sebastian Serafin
+**Autor:** Sebastian Serafin  
+**Data wydania:** 13.05.2026
 
 ---
 
@@ -16,12 +17,27 @@ System zarządzania obecnością pracowników na halach produkcyjnych.
 
 ---
 
+## Funkcje aplikacji
+
+- 📊 **Dashboard** - statystyki globalne i per hala, wykresy obecności, alerty
+- 📝 **Karta obecności** - wprowadzanie godzin, nadgodzin, absencji
+- ⏱️ **Limity godzin** - kontrola limitów dla pracowników Agencja/DG
+- 📧 **Powiadomienia email** - automatyczne alerty o przekroczeniu limitów
+- 📅 **Kalendarz** - notatki, święta, historia zmian
+- 👥 **Panel Admina** - zarządzanie użytkownikami, halami, pracownikami
+- 📤 **Eksport Excel** - dane obecności i logi systemowe
+- 💾 **Automatyczny backup** - co 24h, ostatnie 7 kopii
+- 🔐 **Role użytkowników** - admin, mistrz, brygadzista, gość
+
+---
+
 ## Wymagania
 
 - Docker 20.10+
 - Docker Compose 2.0+
 - Min. 512 MB RAM
 - Min. 1 GB miejsca na dysku
+- Dostęp do serwera SMTP (dla powiadomień email)
 
 ---
 
@@ -47,16 +63,24 @@ Edytuj plik `.env`:
 nano .env
 ```
 
-**WAŻNE:** Zmień `JWT_SECRET` na własny klucz (min. 32 znaki):
+**Zmienne środowiskowe:**
 
-```
-JWT_SECRET=TwojBezpiecznyKluczMin32Znaki123!
-```
+| Zmienna | Opis | Wartość domyślna |
+|---------|------|------------------|
+| `PORT` | Port aplikacji | 80 |
+| `JWT_SECRET` | Klucz JWT (min. 32 znaki) | (wymagany) |
+| `SMTP_HOST` | Serwer SMTP | imcpoland.home.pl |
+| `SMTP_PORT` | Port SMTP | 587 |
+| `SMTP_SECURE` | SSL/TLS | false |
+| `SMTP_USER` | Login SMTP | (skonfigurowany) |
+| `SMTP_PASS` | Hasło SMTP | (skonfigurowany) |
+| `SMTP_FROM_NAME` | Nazwa nadawcy | ProAbsence |
+| `SMTP_FROM_EMAIL` | Email nadawcy | (skonfigurowany) |
 
 ### 3. Uruchomienie
 
 ```bash
-# Pobierz obraz i uruchom
+# Pobierz obrazy i uruchom
 docker-compose up -d
 
 # Sprawdź status

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { fetchApi } from "../lib/api";
 import * as XLSX from "xlsx";
 import { Database, RefreshCw } from "lucide-react";
+import { format } from "date-fns";
 
 export default function Admin() {
   const [users, setUsers] = useState<any[]>([]);
@@ -14,21 +15,121 @@ export default function Admin() {
   const [confirmingEmployeeId, setConfirmingEmployeeId] = useState<number | null>(null);
   
   // Filtry pracowników
-  const [employeeFilter, setEmployeeFilter] = useState({ name: "", position: "", hall_id: "" });
+  const [employeeFilter, setEmployeeFilter] = useState({ name: "", position: "", hall_id: "", employment_type: "" });
+  
+  // Filtr logów - domyślnie bieżący miesiąc
+  const [logsMonth, setLogsMonth] = useState(format(new Date(), "yyyy-MM"));
+  
+  // Ustawienia limitów godzin
+  const [settings, setSettings] = useState<{hours_limit_agencja: string, hours_limit_dg: string}>({
+    hours_limit_agencja: "200",
+    hours_limit_dg: "200"
+  });
+  const [savingAgencja, setSavingAgencja] = useState(false);
+  const [savingDG, setSavingDG] = useState(false);
+  const [savedAgencja, setSavedAgencja] = useState(false);
+  const [savedDG, setSavedDG] = useState(false);
+  
+  // Powiadomienia mailowe
+  const [notificationEmails, setNotificationEmails] = useState<any[]>([]);
+  const [newEmail, setNewEmail] = useState("");
+  const [addingEmail, setAddingEmail] = useState(false);
   
   // Forms
-  const [newUser, setNewUser] = useState({ username: "", password: "", role: "foreman", hall_id: "" });
+  const [newUser, setNewUser] = useState({ username: "", password: "", role: "foreman", hall_id: "", employee_number: "" });
   const [newHall, setNewHall] = useState({ name: "", is_active: true });
-  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", hall_id: "" });
+  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", hall_id: "", employee_number: "", employment_type: "Etat" });
 
   const [error, setError] = useState<string | null>(null);
+
+  const loadLogs = (month?: string) => {
+    const m = month || logsMonth;
+    fetchApi(`/api/logs?month=${m}`).then(setLogs);
+  };
+
+  const loadSettings = () => {
+    fetchApi("/api/settings").then(data => {
+      if (data.hours_limit_agencja || data.hours_limit_dg) {
+        setSettings({
+          hours_limit_agencja: data.hours_limit_agencja || "200",
+          hours_limit_dg: data.hours_limit_dg || "200"
+        });
+      }
+    });
+  };
+
+  const saveSettingsAgencja = async () => {
+    setSavingAgencja(true);
+    setSavedAgencja(false);
+    try {
+      await fetchApi("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ key: 'hours_limit_agencja', value: settings.hours_limit_agencja })
+      });
+      setSavedAgencja(true);
+      setTimeout(() => setSavedAgencja(false), 2000);
+    } catch (e) {
+      setError("Błąd zapisu ustawień Agencja");
+    }
+    setSavingAgencja(false);
+  };
+
+  const saveSettingsDG = async () => {
+    setSavingDG(true);
+    setSavedDG(false);
+    try {
+      await fetchApi("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ key: 'hours_limit_dg', value: settings.hours_limit_dg })
+      });
+      setSavedDG(true);
+      setTimeout(() => setSavedDG(false), 2000);
+    } catch (e) {
+      setError("Błąd zapisu ustawień DG");
+    }
+    setSavingDG(false);
+  };
+
+  const loadNotificationEmails = () => {
+    fetchApi("/api/notification-emails").then(setNotificationEmails).catch(() => {});
+  };
+
+  const handleAddEmail = async () => {
+    if (!newEmail || !newEmail.includes('@')) {
+      setError("Wprowadź prawidłowy adres email");
+      return;
+    }
+    setAddingEmail(true);
+    try {
+      await fetchApi("/api/notification-emails", {
+        method: "POST",
+        body: JSON.stringify({ email: newEmail })
+      });
+      setNewEmail("");
+      loadNotificationEmails();
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setAddingEmail(false);
+  };
+
+  const handleDeleteEmail = async (id: number) => {
+    try {
+      await fetchApi(`/api/notification-emails/${id}`, { method: "DELETE" });
+      loadNotificationEmails();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const loadData = () => {
     fetchApi("/api/users").then(setUsers);
     fetchApi("/api/halls").then(setHalls);
     fetchApi("/api/employees").then(setEmployees);
-    fetchApi("/api/logs").then(setLogs);
     fetchApi("/api/backups").then(setBackups);
+    loadLogs(logsMonth); // Odśwież logi przy każdej akcji
+    loadSettings();
+    loadNotificationEmails();
   };
 
   const handleCreateBackup = async () => {
@@ -43,12 +144,14 @@ export default function Admin() {
     }
   };
   
-  // Wyświetlaj tylko 15 ostatnich logów
-  const displayedLogs = logs.slice(0, 15);
-
   useEffect(() => {
     loadData();
   }, []);
+  
+  // Ładuj logi przy zmianie miesiąca
+  useEffect(() => {
+    loadLogs();
+  }, [logsMonth]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +164,7 @@ export default function Admin() {
           hall_id: newUser.hall_id ? parseInt(newUser.hall_id) : null
         })
       });
-      setNewUser({ username: "", password: "", role: "foreman", hall_id: "" });
+      setNewUser({ username: "", password: "", role: "foreman", hall_id: "", employee_number: "" });
       loadData();
     } catch (err: any) {
       setError(err.message);
@@ -126,7 +229,7 @@ export default function Admin() {
         method: "POST",
         body: JSON.stringify(newEmployee)
       });
-      setNewEmployee({ first_name: "", last_name: "", position: "", hall_id: "" });
+      setNewEmployee({ first_name: "", last_name: "", position: "", hall_id: "", employee_number: "", employment_type: "Etat" });
       loadData();
     } catch (err: any) {
       setError(err.message);
@@ -147,31 +250,26 @@ export default function Admin() {
   const exportLogsToExcel = () => {
     if (logs.length === 0) return;
     
-    const data = logs.map(log => {
-      const date = new Date(log.timestamp);
-      return {
-        "Data": date.toLocaleDateString("pl-PL"),
-        "Godzina": date.toLocaleTimeString("pl-PL"),
-        "Użytkownik": log.username || "",
-        "Akcja": log.action || "",
-        "Szczegóły": log.details || ""
-      };
-    });
+    const data = logs.map(log => ({
+      "Data i Godzina": log.timestamp,
+      "Użytkownik": log.username || "",
+      "Akcja": log.action || "",
+      "Szczegóły": log.details || ""
+    }));
 
     const ws = XLSX.utils.json_to_sheet(data);
     
     // Ustawienie szerokości kolumn
     ws['!cols'] = [
-      { wch: 12 },  // Data
-      { wch: 10 },  // Godzina
+      { wch: 20 },  // Data i Godzina
       { wch: 15 },  // Użytkownik
       { wch: 25 },  // Akcja
-      { wch: 50 }   // Szczegóły
+      { wch: 60 }   // Szczegóły
     ];
     
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Logi_Systemowe");
-    XLSX.writeFile(wb, `Logi_Systemowe_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, `Logi_${logsMonth}`);
+    XLSX.writeFile(wb, `Logi_Systemowe_${logsMonth}.xlsx`);
   };
 
   return (
@@ -240,7 +338,14 @@ export default function Admin() {
                 required
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
+              <input
+                type="text"
+                placeholder="Nr pracownika"
+                value={newUser.employee_number}
+                onChange={e => setNewUser({...newUser, employee_number: e.target.value})}
+                className="border border-gray-300 rounded-lg px-3 py-2"
+              />
               <select
                 value={newUser.role}
                 onChange={e => setNewUser({...newUser, role: e.target.value})}
@@ -323,11 +428,120 @@ export default function Admin() {
         </div>
       </div>
 
+      {/* Ustawienia Limitów Godzin */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="text-lg font-semibold mb-4">⏱️ Limity Godzin (miesięczne)</h3>
+        <p className="text-sm text-gray-500 mb-4">Ustaw miesięczny limit godzin dla pracowników Agencji i DG. Etat nie ma limitu.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-orange-700 min-w-[80px]">Agencja:</label>
+            <input
+              type="number"
+              value={settings.hours_limit_agencja}
+              onChange={e => setSettings({...settings, hours_limit_agencja: e.target.value})}
+              className="border border-gray-300 rounded-lg px-3 py-2 w-24 text-center font-bold"
+              min="0"
+            />
+            <span className="text-sm text-gray-500">godzin/miesiąc</span>
+            <button
+              type="button"
+              onClick={saveSettingsAgencja}
+              disabled={savingAgencja}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                savedAgencja 
+                  ? 'bg-green-500 text-white' 
+                  : 'bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50'
+              }`}
+            >
+              {savingAgencja ? '...' : savedAgencja ? '✓ Zapisano' : 'Zapisz'}
+            </button>
+          </div>
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-purple-700 min-w-[80px]">DG:</label>
+            <input
+              type="number"
+              value={settings.hours_limit_dg}
+              onChange={e => setSettings({...settings, hours_limit_dg: e.target.value})}
+              className="border border-gray-300 rounded-lg px-3 py-2 w-24 text-center font-bold"
+              min="0"
+            />
+            <span className="text-sm text-gray-500">godzin/miesiąc</span>
+            <button
+              type="button"
+              onClick={saveSettingsDG}
+              disabled={savingDG}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                savedDG 
+                  ? 'bg-green-500 text-white' 
+                  : 'bg-purple-500 text-white hover:bg-purple-600 disabled:opacity-50'
+              }`}
+            >
+              {savingDG ? '...' : savedDG ? '✓ Zapisano' : 'Zapisz'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Powiadomienia Mailowe */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="text-lg font-semibold mb-4">📧 Powiadomienia Mailowe</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Dodaj adresy email osób, które mają otrzymywać powiadomienia o przekroczeniu limitu godzin przez pracowników Agencji/DG.
+        </p>
+        
+        <div className="flex gap-3 mb-4">
+          <input
+            type="email"
+            placeholder="Wprowadź adres email..."
+            value={newEmail}
+            onChange={e => setNewEmail(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAddEmail()}
+            className="flex-1 border border-gray-300 rounded-lg px-4 py-2"
+          />
+          <button
+            type="button"
+            onClick={handleAddEmail}
+            disabled={addingEmail}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+          >
+            {addingEmail ? '...' : 'Dodaj'}
+          </button>
+        </div>
+
+        {notificationEmails.length > 0 ? (
+          <div className="space-y-2">
+            {notificationEmails.map(email => (
+              <div key={email.id} className="flex items-center justify-between bg-gray-50 px-4 py-3 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <span className="text-blue-600">📧</span>
+                  <span className="text-gray-800">{email.email}</span>
+                </div>
+                <button
+                  onClick={() => handleDeleteEmail(email.id)}
+                  className="text-red-500 hover:text-red-700 text-sm font-medium"
+                >
+                  Usuń
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-400 text-sm italic">Brak skonfigurowanych adresów email</p>
+        )}
+      </div>
+
       {/* Zarządzanie Pracownikami */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
         <h3 className="text-lg font-semibold mb-4">Baza Pracowników</h3>
         <form onSubmit={handleCreateEmployee} className="space-y-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <input
+              type="text"
+              placeholder="Nr pracownika"
+              value={newEmployee.employee_number}
+              onChange={e => setNewEmployee({...newEmployee, employee_number: e.target.value})}
+              className="border border-gray-300 rounded-lg px-3 py-2"
+            />
             <input
               type="text"
               placeholder="Imię"
@@ -362,6 +576,42 @@ export default function Admin() {
               {halls.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
             </select>
           </div>
+          <div className="flex items-center gap-4 mb-2">
+            <span className="text-sm font-medium text-gray-700">Forma:</span>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="admin_employment_type"
+                value="Etat"
+                checked={newEmployee.employment_type === "Etat"}
+                onChange={e => setNewEmployee({...newEmployee, employment_type: e.target.value})}
+                className="w-4 h-4 text-blue-600"
+              />
+              <span className="text-sm">Etat</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="admin_employment_type"
+                value="Agencja"
+                checked={newEmployee.employment_type === "Agencja"}
+                onChange={e => setNewEmployee({...newEmployee, employment_type: e.target.value})}
+                className="w-4 h-4 text-orange-600"
+              />
+              <span className="text-sm">Agencja</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="admin_employment_type"
+                value="DG"
+                checked={newEmployee.employment_type === "DG"}
+                onChange={e => setNewEmployee({...newEmployee, employment_type: e.target.value})}
+                className="w-4 h-4 text-purple-600"
+              />
+              <span className="text-sm">DG</span>
+            </label>
+          </div>
           <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
             Dodaj Pracownika
           </button>
@@ -391,10 +641,20 @@ export default function Admin() {
             <option value="">Wszystkie hale</option>
             {halls.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
-          {(employeeFilter.name || employeeFilter.position || employeeFilter.hall_id) && (
+          <select
+            value={employeeFilter.employment_type}
+            onChange={e => setEmployeeFilter({...employeeFilter, employment_type: e.target.value})}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">Wszystkie formy</option>
+            <option value="Etat">Etat</option>
+            <option value="Agencja">Agencja</option>
+            <option value="DG">DG</option>
+          </select>
+          {(employeeFilter.name || employeeFilter.position || employeeFilter.hall_id || employeeFilter.employment_type) && (
             <button
               type="button"
-              onClick={() => setEmployeeFilter({ name: "", position: "", hall_id: "" })}
+              onClick={() => setEmployeeFilter({ name: "", position: "", hall_id: "", employment_type: "" })}
               className="text-sm text-gray-500 hover:text-red-600 flex items-center justify-center gap-1"
             >
               ✕ Wyczyść filtry
@@ -404,12 +664,14 @@ export default function Admin() {
 
         <div className="overflow-x-auto max-h-96">
           <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 sticky top-0">
-              <tr>
-                <th className="p-3">Imię i Nazwisko</th>
-                <th className="p-3">Stanowisko</th>
-                <th className="p-3">Hala</th>
-                <th className="p-3 text-right">Akcje</th>
+            <thead className="sticky top-0 z-20">
+              <tr className="bg-gray-50">
+                <th className="p-3 bg-gray-50">Nr</th>
+                <th className="p-3 bg-gray-50">Imię i Nazwisko</th>
+                <th className="p-3 bg-gray-50">Stanowisko</th>
+                <th className="p-3 bg-gray-50">Forma</th>
+                <th className="p-3 bg-gray-50">Hala</th>
+                <th className="p-3 text-right bg-gray-50">Akcje</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -419,12 +681,23 @@ export default function Admin() {
                   const nameMatch = !employeeFilter.name || fullName.includes(employeeFilter.name.toLowerCase());
                   const positionMatch = !employeeFilter.position || emp.position.toLowerCase().includes(employeeFilter.position.toLowerCase());
                   const hallMatch = !employeeFilter.hall_id || emp.hall_id === parseInt(employeeFilter.hall_id);
-                  return nameMatch && positionMatch && hallMatch;
+                  const formaMatch = !employeeFilter.employment_type || (emp.employment_type || 'Etat') === employeeFilter.employment_type;
+                  return nameMatch && positionMatch && hallMatch && formaMatch;
                 })
                 .map(emp => (
                 <tr key={emp.id} className="hover:bg-gray-50">
+                  <td className="p-3 text-gray-500 font-mono text-xs">{emp.employee_number || '-'}</td>
                   <td className="p-3 font-medium">{emp.first_name} {emp.last_name}</td>
                   <td className="p-3 text-gray-600">{emp.position}</td>
+                  <td className="p-3">
+                    <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                      emp.employment_type === 'Agencja' ? 'bg-orange-100 text-orange-700' :
+                      emp.employment_type === 'DG' ? 'bg-purple-100 text-purple-700' :
+                      'bg-blue-100 text-blue-700'
+                    }`}>
+                      {emp.employment_type || 'Etat'}
+                    </span>
+                  </td>
                   <td className="p-3 text-gray-600">
                     {halls.find(h => h.id === emp.hall_id)?.name || `Hala ID: ${emp.hall_id}`}
                   </td>
@@ -450,7 +723,7 @@ export default function Admin() {
                       <button 
                         type="button"
                         onClick={() => setConfirmingEmployeeId(emp.id)}
-                        className="text-sm text-red-600 hover:text-red-800 cursor-pointer relative z-20"
+                        className="text-sm text-red-600 hover:text-red-800 cursor-pointer"
                       >
                         Usuń
                       </button>
@@ -465,20 +738,33 @@ export default function Admin() {
 
       {/* Logi Systemowe */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">Logi Systemowe (Archiwum)</h3>
-          <button
-            onClick={exportLogsToExcel}
-            className="flex items-center gap-2 text-sm font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
-            title="Eksportuj wszystkie logi do Excela"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            Eksport
-          </button>
+        <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+          <div className="flex items-center gap-4">
+            <h3 className="text-lg font-semibold">Logi Systemowe</h3>
+            <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
+              {logs.length} wpisów
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="month"
+              value={logsMonth}
+              onChange={(e) => setLogsMonth(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer hover:border-blue-400 transition-colors"
+            />
+            <button
+              onClick={exportLogsToExcel}
+              className="flex items-center gap-2 text-sm font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
+              title={`Eksportuj logi z ${logsMonth} do Excela`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Eksport
+            </button>
+          </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-96">
           <table className="w-full text-left text-sm">
             <thead className="bg-gray-50 sticky top-0">
               <tr>
@@ -489,9 +775,9 @@ export default function Admin() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {displayedLogs.map(log => (
+              {logs.map(log => (
                 <tr key={log.id} className="hover:bg-gray-50">
-                  <td className="p-3 whitespace-nowrap">{new Date(log.timestamp).toLocaleString("pl-PL")}</td>
+                  <td className="p-3 whitespace-nowrap">{log.timestamp}</td>
                   <td className="p-3 font-medium">{log.username}</td>
                   <td className="p-3"><span className="bg-slate-100 px-2 py-1 rounded text-xs">{log.action}</span></td>
                   <td className="p-3 text-gray-600">{log.details}</td>
