@@ -8,32 +8,46 @@
 
 ---
 
-## Spis treści
+## SPIS TREŚCI
 
-1. [Wprowadzenie](#1-wprowadzenie)
-2. [Logowanie do systemu](#2-logowanie-do-systemu)
-3. [Pulpit (Dashboard)](#3-pulpit-dashboard)
-4. [Wprowadzanie danych (Karta obecności)](#4-wprowadzanie-danych-karta-obecności)
-5. [Kalendarz](#5-kalendarz)
-6. [Panel Admina](#6-panel-admina)
-7. [Role użytkowników](#7-role-użytkowników)
-8. [Skróty i kody](#8-skróty-i-kody)
-9. [Eksport danych](#9-eksport-danych)
-10. [Często zadawane pytania (FAQ)](#10-często-zadawane-pytania-faq)
+**1.** Informacje podstawowe
+
+**2.** Logowanie do systemu
+
+**3.** Pulpit (Dashboard)
+
+**4.** Wprowadzanie obecności (Mistrz/Brygadzista)
+
+**5.** Przeglądanie danych
+
+**6.** Zarządzanie pracownikami
+
+**7.** Zarządzanie limitami godzin (Administrator)
+
+**8.** Zarządzanie użytkownikami (Administrator)
+
+**9.** Zarządzanie halami (Administrator)
+
+**10.** Powiadomienia email
+
+**11.** Historia zmian
 
 ---
 
-## 1. Wprowadzenie
+## 1. Informacje podstawowe
 
 ### Czym jest ProAbsence?
 
-ProAbsence to system do zarządzania obecnością pracowników na halach produkcyjnych. Umożliwia:
+ProAbsence to system do zarządzania obecnością pracowników na halach produkcyjnych.
 
-- Rejestrację godzin pracy i nadgodzin
-- Ewidencję urlopów i nieobecności
-- Kontrolę limitów godzin dla pracowników Agencja/DG
+### Główne funkcje
+
+- Rejestracja godzin pracy i nadgodzin
+- Ewidencja urlopów i nieobecności
+- Kontrola limitów godzin dla pracowników Agencja/DG
 - Automatyczne powiadomienia email o przekroczeniu limitów
 - Generowanie raportów i eksport do Excel
+- Automatyczne kopie zapasowe
 
 ### Wymagania
 
@@ -41,23 +55,25 @@ ProAbsence to system do zarządzania obecnością pracowników na halach produkc
 - Dostęp do sieci firmowej
 - Konto użytkownika w systemie
 
+### Role użytkowników
+
+| Rola | Uprawnienia |
+|------|-------------|
+| **Administrator** | Pełny dostęp do wszystkich funkcji |
+| **Mistrz** | Wprowadzanie danych, podgląd statystyk |
+| **Brygadzista** | Wprowadzanie danych (ograniczone) |
+| **Gość** | Tylko podgląd |
+
 ---
 
 ## 2. Logowanie do systemu
 
-### Dostęp do aplikacji
+### Jak się zalogować?
 
 1. Otwórz przeglądarkę internetową
-2. Wpisz adres: **http://[ADRES_SERWERA]**
-3. Pojawi się ekran logowania
-
-### Ekran logowania
-
-![Ekran logowania](screenshots/login.png)
-
-1. **Login** - wpisz swoją nazwę użytkownika
-2. **Hasło** - wpisz swoje hasło
-3. Kliknij przycisk **Zaloguj**
+2. Wpisz adres aplikacji: **http://[ADRES_SERWERA]**
+3. Wprowadź **Login** i **Hasło**
+4. Kliknij przycisk **Zaloguj**
 
 ### Pierwsze logowanie
 
@@ -69,22 +85,27 @@ Przy pierwszym logowaniu użyj danych otrzymanych od administratora.
 
 Kliknij przycisk **Wyloguj** w prawym górnym rogu ekranu.
 
+### Problemy z logowaniem
+
+| Problem | Rozwiązanie |
+|---------|-------------|
+| Nieprawidłowe hasło | Sprawdź Caps Lock, skontaktuj się z administratorem |
+| Konto zablokowane | Skontaktuj się z administratorem |
+| Strona nie ładuje się | Sprawdź połączenie z siecią |
+
 ---
 
 ## 3. Pulpit (Dashboard)
 
-Po zalogowaniu zobaczysz pulpit z podsumowaniem danych.
+### Opis
 
-### Elementy pulpitu
+Po zalogowaniu zobaczysz pulpit z podsumowaniem danych dla wybranej hali.
 
-#### Pasek wyboru hali
+### Wybór hali
 
 Na górze ekranu znajduje się lista hal. Kliknij nazwę hali, aby zobaczyć jej statystyki.
 
-- **Wszystkie hale** - podsumowanie globalne
-- **Hala 1, Hala 2, ...** - statystyki konkretnej hali
-
-#### Kafelki statystyk
+### Kafelki statystyk
 
 | Kafelek | Opis |
 |---------|------|
@@ -95,12 +116,7 @@ Na górze ekranu znajduje się lista hal. Kliknij nazwę hali, aby zobaczyć jej
 | ⏰ **Suma godzin** | Łączna liczba przepracowanych godzin |
 | 💼 **Nadgodziny** | Łączna liczba nadgodzin |
 
-#### Wykresy
-
-- **Wykres obecności** - pokazuje rozkład obecności w czasie
-- **Wykres godzin** - pokazuje przepracowane godziny
-
-#### Alerty i ostrzeżenia
+### Alerty i ostrzeżenia
 
 System wyświetla automatyczne alerty:
 
@@ -108,45 +124,40 @@ System wyświetla automatyczne alerty:
 |-------|------|
 | 📅 **Braki kadrowe jutro** | Lista pracowników nieobecnych jutro |
 | 🔄 **Powtarzające się nieobecności** | Pracownicy z częstymi nieobecnościami |
-| ⚠️ **Limit urlopu** | Pracownicy zbliżający się do limitu urlopu |
 | 🚨 **Przekroczenie limitu godzin** | Pracownicy Agencja/DG z przekroczonym limitem |
 
 ---
 
-## 4. Wprowadzanie danych (Karta obecności)
+## 4. Wprowadzanie obecności (Mistrz/Brygadzista)
 
-### Dostęp do karty obecności
+### Dostęp
 
 1. Kliknij **Wprowadzanie Danych** w menu bocznym
 2. Wybierz halę z listy na górze
 3. Wybierz miesiąc (domyślnie bieżący)
 
-### Wygląd karty obecności
+### Karta obecności
 
-Karta obecności to tabela z:
-- **Wiersze** - pracownicy
-- **Kolumny** - dni miesiąca + podsumowania
+Karta obecności to tabela z pracownikami (wiersze) i dniami miesiąca (kolumny).
 
-### Kolumny specjalne
-
-| Kolumna | Opis |
-|---------|------|
-| **Nr** | Numer pracownika |
-| **Imię Nazwisko** | Dane pracownika |
-| **Forma** | Forma zatrudnienia (Etat/Agencja/DG) |
-| **Limit** | Pozostały limit godzin (tylko Agencja/DG) |
-| **Suma Godz** | Suma przepracowanych godzin |
-| **Nadgodziny** | Suma nadgodzin |
-| **UW** | Liczba dni urlopu |
-| **CH** | Liczba dni chorobowego |
-
-### Wprowadzanie godzin
+### Jak wprowadzić godziny?
 
 1. Kliknij w komórkę odpowiadającą pracownikowi i dniu
-2. Wpisz wartość:
-   - **Liczba** (np. `8`, `10`, `7.5`) - godziny pracy
-   - **Kod nieobecności** (np. `UW`, `CH`) - patrz [Skróty i kody](#8-skróty-i-kody)
-3. Naciśnij **Enter** lub **Tab** aby przejść do następnej komórki
+2. Wpisz liczbę godzin (np. `8`, `10`, `7.5`)
+3. Naciśnij **Enter** aby zapisać
+
+### Jak wprowadzić nieobecność?
+
+Wpisz kod nieobecności w komórce:
+
+| Kod | Znaczenie | Kolor |
+|-----|-----------|-------|
+| `UW` | Urlop wypoczynkowy | Zielony |
+| `CH` lub `L4` | Chorobowe | Czerwony |
+| `NŻ` | Nieobecność nieplanowana | Pomarańczowy |
+| `OP` | Opieka nad dzieckiem | Niebieski |
+| `KR` | Oddawanie krwi | Fioletowy |
+| `BL` | Urlop bezpłatny | Żółty |
 
 ### Nawigacja klawiaturą
 
@@ -154,260 +165,229 @@ Karta obecności to tabela z:
 |---------|-------|
 | **Enter** / **↓** | Przejdź w dół |
 | **Tab** | Przejdź w prawo |
-| **Shift+Tab** | Przejdź w lewo |
 | **↑** | Przejdź w górę |
 
 ### Kolumna Limit (Agencja/DG)
 
-Dla pracowników z formą zatrudnienia **Agencja** lub **DG**:
-
-- Wyświetla pozostały limit godzin
-- **Kolor żółty** - limit w normie
-- **Kolor czerwony pulsujący** - limit poniżej 20h (ostrzeżenie)
-- **Wartość ujemna** - limit przekroczony
-
-⚠️ Gdy limit zostanie przekroczony, system automatycznie wysyła powiadomienie email do osób odpowiedzialnych.
-
-### Kolorowanie komórek
+Dla pracowników Agencja/DG wyświetlany jest pozostały limit godzin:
 
 | Kolor | Znaczenie |
 |-------|-----------|
-| Biały | Dzień roboczy |
-| Szary | Weekend/święto |
-| Zielony | Urlop (UW) |
-| Czerwony | Chorobowe (CH/L4) |
-| Pomarańczowy | Nieplanowana nieobecność (NŻ) |
-| Niebieski | Opieka (OP) |
-| Fioletowy | Krew (KR) |
-| Żółty | Bezpłatny (BL) |
+| Żółty | Limit w normie |
+| Czerwony pulsujący | Limit poniżej 20h - ostrzeżenie |
+| Wartość ujemna | Limit przekroczony |
+
+⚠️ Gdy limit zostanie przekroczony, system automatycznie wysyła powiadomienie email.
+
+### Eksport do Excel
+
+1. Kliknij przycisk **📥 Eksport Excel** nad tabelą
+2. Plik zostanie pobrany automatycznie
+
+---
+
+## 5. Przeglądanie danych
+
+### Kalendarz
+
+1. Kliknij **Kalendarz** w menu bocznym
+2. Przeglądaj dni miesiąca
+3. Kliknij na dzień aby zobaczyć szczegóły lub dodać notatkę
+
+### Święta
+
+Dni wolne od pracy są oznaczone kolorem czerwonym w kalendarzu.
+
+### Statystyki
+
+Na pulpicie dostępne są wykresy:
+- Wykres obecności w czasie
+- Wykres przepracowanych godzin
+
+---
+
+## 6. Zarządzanie pracownikami
 
 ### Dodawanie pracownika
 
-1. Wypełnij formularz na dole karty:
+1. Przejdź do **Wprowadzanie Danych**
+2. Wybierz halę
+3. Przewiń na dół strony
+4. Wypełnij formularz:
    - Nr pracownika
    - Imię
    - Nazwisko
    - Stanowisko
-   - Forma zatrudnienia
-2. Kliknij **Dodaj pracownika**
+   - Forma zatrudnienia (Etat/Agencja/DG)
+5. Kliknij **Dodaj pracownika**
+
+### Edycja pracownika (Administrator)
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Baza pracowników**
+3. Znajdź pracownika (użyj filtrów)
+4. Kliknij **Edytuj**
+5. Zmień dane i zapisz
+
+### Usuwanie pracownika (Administrator)
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Baza pracowników**
+3. Znajdź pracownika
+4. Kliknij **Usuń**
+5. Potwierdź usunięcie
+
+⚠️ **UWAGA:** Usunięcie pracownika usuwa również jego historię obecności!
 
 ---
 
-## 5. Kalendarz
+## 7. Zarządzanie limitami godzin (Administrator)
 
-### Dostęp do kalendarza
+### Ustawienie limitów
 
-Kliknij **Kalendarz** w menu bocznym.
+1. Przejdź do **Panel Admina**
+2. Znajdź sekcję **Limity godzin**
+3. Ustaw **Limit Agencja** (np. 200 godzin/miesiąc)
+4. Kliknij **Zapisz**
+5. Ustaw **Limit DG** (np. 200 godzin/miesiąc)
+6. Kliknij **Zapisz**
 
-### Funkcje kalendarza
-
-#### Notatki
-
-1. Kliknij na dzień w kalendarzu
-2. Wpisz notatkę
-3. Kliknij **Zapisz**
-
-#### Święta
-
-Dni wolne od pracy są oznaczone kolorem czerwonym.
-
-#### Historia zmian
-
-Kliknij **Historia** aby zobaczyć ostatnie zmiany w systemie.
-
----
-
-## 6. Panel Admina
-
-⚠️ **Dostępny tylko dla administratorów**
-
-### Dostęp
-
-Kliknij **Panel Admina** w menu bocznym (widoczny tylko dla roli Admin).
-
-### Sekcje panelu
-
-#### Zarządzanie użytkownikami
-
-- Dodawanie nowych użytkowników
-- Przypisywanie ról
-- Przypisywanie do hal
-- Usuwanie użytkowników
-
-#### Zarządzanie halami
-
-- Dodawanie nowych hal
-- Aktywacja/dezaktywacja hal
-- Usuwanie hal
-
-#### Limity godzin
-
-Ustawienie limitów godzin dla pracowników:
-
-| Pole | Opis |
-|------|------|
-| **Limit Agencja** | Miesięczny limit godzin dla pracowników Agencja |
-| **Limit DG** | Miesięczny limit godzin dla pracowników DG |
-
-Po zmianie kliknij **Zapisz**.
-
-#### Powiadomienia mailowe
-
-Lista adresów email osób otrzymujących powiadomienia o przekroczeniu limitów:
-
-1. Wpisz adres email
-2. Kliknij **Dodaj**
-3. Aby usunąć - kliknij **Usuń** przy adresie
-
-#### Baza pracowników
-
-- Przeglądanie wszystkich pracowników
-- Filtrowanie po imieniu, stanowisku, hali, formie zatrudnienia
-- Edycja danych pracownika
-- Usuwanie pracownika
-
-#### Logi systemowe
-
-- Historia wszystkich akcji w systemie
-- Filtrowanie po miesiącu
-- Eksport do Excel
-
-#### Kopie zapasowe
-
-- Lista automatycznych kopii zapasowych
-- Tworzenie ręcznej kopii
-- Przywracanie z kopii
-
----
-
-## 7. Role użytkowników
-
-### Admin
-
-Pełny dostęp do wszystkich funkcji:
-- ✅ Pulpit
-- ✅ Wprowadzanie danych (wszystkie hale)
-- ✅ Kalendarz
-- ✅ Panel Admina
-- ✅ Zarządzanie użytkownikami
-- ✅ Zarządzanie halami
-- ✅ Ustawienia limitów
-- ✅ Eksport danych
-
-### Mistrz
-
-Dostęp do przypisanych hal:
-- ✅ Pulpit
-- ✅ Wprowadzanie danych (przypisane hale)
-- ✅ Kalendarz
-- ❌ Panel Admina
-
-### Brygadzista
-
-Ograniczony dostęp:
-- ✅ Pulpit (tylko podgląd)
-- ✅ Wprowadzanie danych (przypisane hale)
-- ❌ Kalendarz (tylko podgląd)
-- ❌ Panel Admina
-
-### Gość
-
-Tylko podgląd:
-- ✅ Pulpit (tylko podgląd)
-- ❌ Wprowadzanie danych
-- ❌ Kalendarz
-- ❌ Panel Admina
-
----
-
-## 8. Skróty i kody
-
-### Kody nieobecności
-
-Wpisz kod w komórce karty obecności:
-
-| Kod | Znaczenie | Kolor |
-|-----|-----------|-------|
-| `UW` | Urlop wypoczynkowy | Zielony |
-| `CH` lub `L4` | Chorobowe | Czerwony |
-| `NŻ` lub `NZ` | Nieobecność nieplanowana | Pomarańczowy |
-| `OP` | Opieka nad dzieckiem | Niebieski |
-| `KR` lub `KREW` | Oddawanie krwi | Fioletowy |
-| `BL` | Urlop bezpłatny | Żółty |
-
-### Wprowadzanie godzin
-
-| Wartość | Interpretacja |
-|---------|---------------|
-| `8` | 8 godzin pracy |
-| `10` | 8h pracy + 2h nadgodzin |
-| `7.5` lub `7,5` | 7.5 godziny pracy |
-| `12` | 8h pracy + 4h nadgodzin |
-
-### Weekendy i święta
-
-Godziny wpisane w weekendy/święta są automatycznie liczone jako nadgodziny.
-
----
-
-## 9. Eksport danych
-
-### Eksport karty obecności
+### Monitorowanie limitów
 
 1. Przejdź do **Wprowadzanie Danych**
-2. Wybierz halę i miesiąc
-3. Kliknij przycisk **Eksport Excel** (ikona 📥)
-4. Plik zostanie pobrany automatycznie
+2. Sprawdź kolumnę **Limit** w tabeli
+3. Wartości ujemne oznaczają przekroczenie
 
-### Eksport logów (tylko Admin)
+### Automatyczne powiadomienia
+
+Gdy pracownik przekroczy limit, system automatycznie:
+- Wysyła email do wszystkich adresów z listy powiadomień
+- Zapisuje informację w logach systemowych
+
+---
+
+## 8. Zarządzanie użytkownikami (Administrator)
+
+### Dodawanie użytkownika
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Zarządzanie użytkownikami**
+3. Wypełnij formularz:
+   - Login (unikalny)
+   - Hasło (min. 6 znaków)
+   - Rola (Admin/Mistrz/Brygadzista/Gość)
+   - Hala (dla Mistrza/Brygadzisty)
+4. Kliknij **Dodaj użytkownika**
+
+### Usuwanie użytkownika
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Zarządzanie użytkownikami**
+3. Znajdź użytkownika na liście
+4. Kliknij **Usuń**
+
+### Uprawnienia ról
+
+| Funkcja | Admin | Mistrz | Brygadzista | Gość |
+|---------|:-----:|:------:|:-----------:|:----:|
+| Pulpit | ✅ | ✅ | ✅ | ✅ |
+| Wprowadzanie danych | ✅ | ✅ | ✅ | ❌ |
+| Kalendarz | ✅ | ✅ | ❌ | ❌ |
+| Panel Admina | ✅ | ❌ | ❌ | ❌ |
+| Zarządzanie użytkownikami | ✅ | ❌ | ❌ | ❌ |
+| Eksport danych | ✅ | ✅ | ❌ | ❌ |
+
+---
+
+## 9. Zarządzanie halami (Administrator)
+
+### Dodawanie hali
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Zarządzanie halami**
+3. Wpisz nazwę nowej hali
+4. Kliknij **Dodaj halę**
+
+### Aktywacja/Dezaktywacja hali
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Zarządzanie halami**
+3. Kliknij przełącznik przy hali
+
+### Usuwanie hali
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Zarządzanie halami**
+3. Kliknij **Usuń** przy hali
+4. Potwierdź usunięcie
+
+⚠️ **UWAGA:** Usunięcie hali usuwa wszystkich przypisanych pracowników!
+
+---
+
+## 10. Powiadomienia email
+
+### Kiedy wysyłane są powiadomienia?
+
+System automatycznie wysyła email gdy:
+- Pracownik Agencja/DG przekroczy miesięczny limit godzin
+
+### Konfiguracja odbiorców (Administrator)
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Powiadomienia mailowe**
+3. Wpisz adres email
+4. Kliknij **Dodaj**
+
+### Usuwanie odbiorcy
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Powiadomienia mailowe**
+3. Kliknij **Usuń** przy adresie email
+
+### Treść powiadomienia
+
+Email zawiera:
+- Imię i nazwisko pracownika
+- Numer pracownika
+- Halę
+- Formę zatrudnienia
+- Limit godzin
+- Wykorzystane godziny
+- Przekroczenie
+
+---
+
+## 11. Historia zmian
+
+### Logi systemowe (Administrator)
+
+1. Przejdź do **Panel Admina**
+2. Sekcja **Logi systemowe**
+3. Wybierz miesiąc
+4. Przeglądaj historię zmian
+
+### Co jest logowane?
+
+- Logowania użytkowników
+- Zmiany w obecności
+- Dodawanie/usuwanie pracowników
+- Zmiany ustawień
+- Wysłane powiadomienia email
+
+### Eksport logów
 
 1. Przejdź do **Panel Admina**
 2. Sekcja **Logi systemowe**
 3. Wybierz miesiąc
 4. Kliknij **Eksport Excel**
 
----
+### Kopie zapasowe
 
-## 10. Często zadawane pytania (FAQ)
-
-### Jak zmienić hasło?
-
-Skontaktuj się z administratorem systemu.
-
-### Nie widzę swojej hali
-
-Twoje konto nie ma przypisanej tej hali. Skontaktuj się z administratorem.
-
-### Komórka nie zapisuje wartości
-
-- Sprawdź czy wpisałeś poprawną wartość (liczbę lub kod)
-- Sprawdź połączenie z internetem
-- Odśwież stronę (F5)
-
-### Limit godzin pulsuje na czerwono
-
-Pracownik zbliża się do lub przekroczył miesięczny limit godzin. Skontaktuj się z przełożonym.
-
-### Nie otrzymuję powiadomień email
-
-Skontaktuj się z administratorem - Twój adres email może nie być dodany do listy powiadomień.
-
-### Jak dodać nowego pracownika?
-
-1. Przejdź do **Wprowadzanie Danych**
-2. Wybierz halę
-3. Wypełnij formularz na dole strony
-4. Kliknij **Dodaj pracownika**
-
-### Jak usunąć pracownika?
-
-Tylko administrator może usunąć pracownika z systemu (Panel Admina → Baza pracowników).
-
-### Dane nie wyświetlają się poprawnie
-
-1. Odśwież stronę (F5)
-2. Wyczyść cache przeglądarki (Ctrl+Shift+Delete)
-3. Spróbuj innej przeglądarki
+System automatycznie tworzy kopie zapasowe:
+- **Częstotliwość:** co 24 godziny
+- **Retencja:** ostatnie 7 kopii
+- **Lokalizacja:** folder `backups/`
 
 ---
 
