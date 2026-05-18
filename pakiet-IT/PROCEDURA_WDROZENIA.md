@@ -131,7 +131,7 @@ Skopiuj pliki z pakietu wdrożeniowego:
 ```bash
 # Z lokalnego komputera (Windows PowerShell)
 scp docker-compose.yml user@ADRES_SERWERA:/opt/proabsence/
-scp env.example user@ADRES_SERWERA:/opt/proabsence/.env
+scp env.txt user@ADRES_SERWERA:/opt/proabsence/.env
 ```
 
 Lub ręcznie utwórz pliki na serwerze.

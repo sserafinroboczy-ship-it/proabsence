@@ -12,7 +12,7 @@ System zarządzania obecnością pracowników na halach produkcyjnych.
 | Plik | Opis |
 |------|------|
 | `docker-compose.yml` | Konfiguracja Docker |
-| `env.example` | Przykładowy plik zmiennych środowiskowych |
+| `env.txt` | Plik zmiennych środowiskowych (zmień nazwę na `.env`) |
 | `README.md` | Instrukcja wdrożenia |
 
 ---
@@ -52,7 +52,7 @@ cd /opt/proabsence
 
 # Skopiuj pliki z pakietu
 cp docker-compose.yml .
-cp env.example .env
+cp env.txt .env
 ```
 
 ### 2. Konfiguracja
