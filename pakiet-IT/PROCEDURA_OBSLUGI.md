@@ -1,240 +1,224 @@
-# ProAbsence v1.0.0 - Procedura obsługi systemu
+# PROCEDURA OBSŁUGI SYSTEMU ProAbsence
 
-**System zarządzania obecnością pracowników**
-
-**Autor:** Sebastian Serafin  
+**Numer procedury:** PRO-PA-001  
+**Wersja:** 1.0  
 **Data wydania:** 13.05.2026  
-**Wersja:** 1.0.0
+**Autor:** Sebastian Serafin
 
 ---
 
-## Spis treści
+## SPIS TREŚCI
 
-1. [Cel dokumentu](#1-cel-dokumentu)
-2. [Procedura codzienna - Mistrz/Brygadzista](#2-procedura-codzienna---mistrzbrygadzista)
-3. [Procedura tygodniowa - Mistrz](#3-procedura-tygodniowa---mistrz)
-4. [Procedura miesięczna - Admin](#4-procedura-miesięczna---admin)
-5. [Procedura zarządzania limitami godzin](#5-procedura-zarządzania-limitami-godzin)
-6. [Procedura obsługi alertów](#6-procedura-obsługi-alertów)
-7. [Procedura dodawania pracownika](#7-procedura-dodawania-pracownika)
-8. [Procedura usuwania pracownika](#8-procedura-usuwania-pracownika)
-9. [Procedura tworzenia użytkownika](#9-procedura-tworzenia-użytkownika)
-10. [Procedura eksportu danych](#10-procedura-eksportu-danych)
-11. [Procedura awaryjna](#11-procedura-awaryjna)
+1. Cel procedury
+2. Zakres stosowania
+3. Odpowiedzialność osób
+4. Opis postępowania
+5. Dokumenty powiązane
+6. Definicje i terminologia
+7. Historia zmian
 
 ---
 
-## 1. Cel dokumentu
+## 1. CEL PROCEDURY
 
-Dokument opisuje standardowe procedury obsługi systemu ProAbsence dla różnych ról użytkowników. Przestrzeganie procedur zapewnia poprawność danych i efektywne wykorzystanie systemu.
+Celem niniejszej procedury jest określenie zasad i sposobu obsługi systemu ProAbsence służącego do zarządzania obecnością pracowników na halach produkcyjnych.
+
+Procedura ma na celu:
+- Zapewnienie prawidłowego wprowadzania danych o obecności pracowników
+- Określenie odpowiedzialności poszczególnych użytkowników systemu
+- Standaryzację procesów związanych z ewidencją czasu pracy
+- Zapewnienie kontroli limitów godzin dla pracowników Agencja/DG
+- Określenie zasad reagowania na alerty systemowe
 
 ---
 
-## 2. Procedura codzienna - Mistrz/Brygadzista
+## 2. ZAKRES STOSOWANIA
 
-### Cel
-Rejestracja obecności i godzin pracy pracowników.
+### 2.1. Zakres przedmiotowy
 
-### Kiedy wykonywać
-Codziennie, najlepiej na koniec zmiany lub następnego dnia rano.
+Procedura obejmuje następujące obszary:
+- Codzienne wprowadzanie danych o obecności pracowników
+- Rejestrację godzin pracy i nadgodzin
+- Ewidencję urlopów i nieobecności
+- Kontrolę limitów godzin dla pracowników Agencja/DG
+- Zarządzanie użytkownikami i uprawnieniami
+- Zarządzanie halami produkcyjnymi
+- Obsługę alertów i powiadomień systemowych
+- Eksport danych do plików Excel
+- Tworzenie i przywracanie kopii zapasowych
 
-### Kroki
+### 2.2. Zakres podmiotowy
 
-| Krok | Akcja | Uwagi |
-|------|-------|-------|
-| 1 | Zaloguj się do systemu | Użyj swojego loginu i hasła |
-| 2 | Przejdź do **Wprowadzanie Danych** | Menu boczne |
-| 3 | Wybierz swoją halę | Lista na górze ekranu |
-| 4 | Sprawdź czy wybrany jest bieżący miesiąc | Selektor miesiąca |
-| 5 | Znajdź kolumnę z dzisiejszą datą | Przewiń tabelę w prawo |
-| 6 | Dla każdego pracownika wpisz: | |
-| 6a | - Liczbę przepracowanych godzin (np. `8`, `10`) | Lub kod nieobecności |
-| 6b | - Lub kod nieobecności (`UW`, `CH`, `NŻ`, etc.) | Patrz tabela kodów |
-| 7 | Sprawdź kolumnę **Limit** dla Agencja/DG | Czerwony = ostrzeżenie |
-| 8 | Wyloguj się po zakończeniu | Przycisk w prawym górnym rogu |
+Procedura dotyczy wszystkich użytkowników systemu ProAbsence:
+- Administratorów systemu
+- Mistrzów produkcji
+- Brygadzistów
+- Użytkowników z uprawnieniami podglądu (Gość)
 
-### Kody nieobecności
+### 2.3. Zakres terytorialny
+
+Procedura obowiązuje we wszystkich lokalizacjach firmy, w których wdrożony jest system ProAbsence.
+
+---
+
+## 3. ODPOWIEDZIALNOŚĆ OSÓB
+
+### 3.1. Administrator systemu
+
+Administrator systemu odpowiada za:
+
+| Obszar | Zakres odpowiedzialności |
+|--------|--------------------------|
+| Użytkownicy | Tworzenie, edycja i usuwanie kont użytkowników |
+| Hale | Dodawanie, aktywacja/dezaktywacja i usuwanie hal |
+| Limity | Ustawianie limitów godzin dla pracowników Agencja/DG |
+| Powiadomienia | Konfiguracja adresów email do powiadomień |
+| Pracownicy | Edycja i usuwanie pracowników z bazy |
+| Backup | Nadzór nad kopiami zapasowymi, przywracanie danych |
+| Logi | Przeglądanie i eksport logów systemowych |
+| Wsparcie | Pomoc techniczna dla pozostałych użytkowników |
+
+### 3.2. Mistrz produkcji
+
+Mistrz produkcji odpowiada za:
+
+| Obszar | Zakres odpowiedzialności |
+|--------|--------------------------|
+| Obecność | Codzienne wprowadzanie danych o obecności pracowników |
+| Godziny | Rejestracja przepracowanych godzin i nadgodzin |
+| Nieobecności | Wprowadzanie urlopów, zwolnień i innych nieobecności |
+| Limity | Monitorowanie limitów godzin pracowników Agencja/DG |
+| Alerty | Reagowanie na alerty o brakach kadrowych |
+| Pracownicy | Dodawanie nowych pracowników do systemu |
+| Raporty | Eksport danych obecności do Excel |
+
+### 3.3. Brygadzista
+
+Brygadzista odpowiada za:
+
+| Obszar | Zakres odpowiedzialności |
+|--------|--------------------------|
+| Obecność | Wprowadzanie danych o obecności w przypisanej hali |
+| Godziny | Rejestracja przepracowanych godzin |
+| Raportowanie | Zgłaszanie nieprawidłowości do Mistrza |
+
+### 3.4. Gość
+
+Użytkownik z rolą Gość:
+
+| Obszar | Zakres odpowiedzialności |
+|--------|--------------------------|
+| Podgląd | Przeglądanie danych na pulpicie |
+| Brak edycji | Brak możliwości wprowadzania zmian |
+
+---
+
+## 4. OPIS POSTĘPOWANIA
+
+### 4.1. Procedura codzienna - wprowadzanie obecności
+
+**Wykonuje:** Mistrz, Brygadzista  
+**Częstotliwość:** Codziennie, na koniec zmiany lub następnego dnia rano
+
+| Krok | Czynność | Uwagi |
+|:----:|----------|-------|
+| 1 | Zaloguj się do systemu ProAbsence | Użyj przydzielonego loginu i hasła |
+| 2 | Wybierz **Wprowadzanie Danych** z menu bocznego | |
+| 3 | Wybierz właściwą halę z listy na górze ekranu | |
+| 4 | Upewnij się, że wybrany jest bieżący miesiąc | |
+| 5 | Znajdź kolumnę odpowiadającą bieżącej dacie | Przewiń tabelę w prawo |
+| 6 | Dla każdego pracownika wprowadź dane: | |
+| 6a | - Liczbę przepracowanych godzin (np. 8, 10, 7.5) | Dla obecnych pracowników |
+| 6b | - Lub kod nieobecności (UW, CH, NŻ, OP, KR, BL) | Dla nieobecnych pracowników |
+| 7 | Sprawdź kolumnę **Limit** dla pracowników Agencja/DG | Czerwony kolor = ostrzeżenie |
+| 8 | Wyloguj się po zakończeniu pracy | Przycisk w prawym górnym rogu |
+
+**Kody nieobecności:**
 
 | Kod | Znaczenie |
 |-----|-----------|
-| `UW` | Urlop wypoczynkowy |
-| `CH` / `L4` | Chorobowe |
-| `NŻ` | Nieobecność nieplanowana |
-| `OP` | Opieka |
-| `KR` | Oddawanie krwi |
-| `BL` | Urlop bezpłatny |
+| UW | Urlop wypoczynkowy |
+| CH / L4 | Chorobowe / zwolnienie lekarskie |
+| NŻ | Nieobecność nieusprawiedliwiona |
+| OP | Opieka nad dzieckiem |
+| KR | Oddawanie krwi |
+| BL | Urlop bezpłatny |
 
-### Weryfikacja
+### 4.2. Procedura tygodniowa - weryfikacja danych
 
-- [ ] Wszystkie obecności wprowadzone
-- [ ] Brak pustych komórek dla obecnych pracowników
-- [ ] Limity godzin sprawdzone (Agencja/DG)
+**Wykonuje:** Mistrz  
+**Częstotliwość:** Raz w tygodniu (piątek lub poniedziałek)
 
----
-
-## 3. Procedura tygodniowa - Mistrz
-
-### Cel
-Weryfikacja danych i kontrola limitów.
-
-### Kiedy wykonywać
-Raz w tygodniu, najlepiej w piątek lub poniedziałek.
-
-### Kroki
-
-| Krok | Akcja | Uwagi |
-|------|-------|-------|
+| Krok | Czynność | Uwagi |
+|:----:|----------|-------|
 | 1 | Zaloguj się do systemu | |
 | 2 | Przejdź do **Pulpit** | |
 | 3 | Wybierz swoją halę | |
-| 4 | Sprawdź sekcję **Alerty** | |
-| 5 | Przeanalizuj alert **Braki kadrowe jutro** | Zaplanuj zastępstwa |
-| 6 | Sprawdź **Powtarzające się nieobecności** | Rozważ rozmowę z pracownikiem |
-| 7 | Przejdź do **Wprowadzanie Danych** | |
-| 8 | Sprawdź kolumnę **Limit** | Pracownicy Agencja/DG |
-| 9 | Dla pracowników z limitem < 50h | Zaplanuj ograniczenie godzin |
-| 10 | Eksportuj dane do Excel (opcjonalnie) | Przycisk 📥 |
+| 4 | Przeanalizuj sekcję **Alerty**: | |
+| 4a | - Braki kadrowe jutro | Zaplanuj zastępstwa |
+| 4b | - Powtarzające się nieobecności | Rozważ rozmowę z pracownikiem |
+| 4c | - Przekroczenie limitu godzin | Ogranicz godziny pracownika |
+| 5 | Przejdź do **Wprowadzanie Danych** | |
+| 6 | Sprawdź kolumnę **Limit** dla Agencja/DG | |
+| 7 | Dla pracowników z limitem < 50h zaplanuj ograniczenie | |
+| 8 | Opcjonalnie: eksportuj dane do Excel | Przycisk 📥 |
 
-### Weryfikacja
+### 4.3. Procedura miesięczna - zamknięcie miesiąca
 
-- [ ] Alerty przeanalizowane
-- [ ] Limity godzin pod kontrolą
-- [ ] Braki kadrowe zaplanowane
+**Wykonuje:** Administrator  
+**Częstotliwość:** Pierwszy tydzień nowego miesiąca
 
----
-
-## 4. Procedura miesięczna - Admin
-
-### Cel
-Zamknięcie miesiąca, weryfikacja danych, raportowanie.
-
-### Kiedy wykonywać
-Pierwszy tydzień nowego miesiąca.
-
-### Kroki
-
-| Krok | Akcja | Uwagi |
-|------|-------|-------|
-| 1 | Zaloguj się jako Admin | |
+| Krok | Czynność | Uwagi |
+|:----:|----------|-------|
+| 1 | Zaloguj się jako Administrator | |
 | 2 | Przejdź do **Wprowadzanie Danych** | |
 | 3 | Wybierz **poprzedni miesiąc** | |
 | 4 | Dla każdej hali: | |
 | 4a | - Sprawdź kompletność danych | Brak pustych komórek |
-| 4b | - Eksportuj do Excel | Archiwizacja |
+| 4b | - Eksportuj dane do Excel | Archiwizacja |
 | 5 | Przejdź do **Panel Admina** | |
-| 6 | Sekcja **Logi systemowe** | |
-| 7 | Wybierz poprzedni miesiąc | |
-| 8 | Eksportuj logi do Excel | Archiwizacja |
-| 9 | Sprawdź sekcję **Limity godzin** | |
-| 10 | Dostosuj limity na nowy miesiąc (jeśli potrzeba) | |
-| 11 | Sprawdź **Kopie zapasowe** | Min. 7 kopii |
-| 12 | Utwórz ręczną kopię zapasową | Przycisk "Utwórz backup" |
+| 6 | Sekcja **Logi systemowe** - wybierz poprzedni miesiąc | |
+| 7 | Eksportuj logi do Excel | Archiwizacja |
+| 8 | Sprawdź sekcję **Limity godzin** | |
+| 9 | Dostosuj limity na nowy miesiąc (jeśli potrzeba) | |
+| 10 | Sprawdź **Kopie zapasowe** | Minimum 7 kopii |
+| 11 | Utwórz ręczną kopię zapasową | Przycisk "Utwórz backup" |
 
-### Weryfikacja
+### 4.4. Procedura zarządzania limitami godzin
 
-- [ ] Dane poprzedniego miesiąca kompletne
-- [ ] Eksporty Excel zapisane
-- [ ] Logi wyeksportowane
-- [ ] Limity zaktualizowane
-- [ ] Backup utworzony
+**Wykonuje:** Administrator  
+**Częstotliwość:** Według potrzeb
 
----
+#### 4.4.1. Ustawienie limitów
 
-## 5. Procedura zarządzania limitami godzin
+| Krok | Czynność |
+|:----:|----------|
+| 1 | Przejdź do **Panel Admina** |
+| 2 | Znajdź sekcję **Limity godzin** |
+| 3 | Ustaw **Limit Agencja** (np. 200 godzin/miesiąc) |
+| 4 | Kliknij **Zapisz** |
+| 5 | Ustaw **Limit DG** (np. 200 godzin/miesiąc) |
+| 6 | Kliknij **Zapisz** |
 
-### Cel
-Ustawienie i monitorowanie limitów godzin dla pracowników Agencja/DG.
+#### 4.4.2. Konfiguracja powiadomień email
 
-### Kto wykonuje
-Administrator
+| Krok | Czynność |
+|:----:|----------|
+| 1 | Przejdź do **Panel Admina** |
+| 2 | Znajdź sekcję **Powiadomienia mailowe** |
+| 3 | Wpisz adres email odbiorcy |
+| 4 | Kliknij **Dodaj** |
+| 5 | Powtórz dla wszystkich odbiorców |
 
-### Ustawienie limitów
+**Uwaga:** System automatycznie wysyła powiadomienie email gdy pracownik Agencja/DG przekroczy miesięczny limit godzin.
 
-| Krok | Akcja |
-|------|-------|
-| 1 | Zaloguj się jako Admin |
-| 2 | Przejdź do **Panel Admina** |
-| 3 | Znajdź sekcję **Limity godzin** |
-| 4 | Ustaw **Limit Agencja** (np. 200) |
-| 5 | Kliknij **Zapisz** przy polu Agencja |
-| 6 | Ustaw **Limit DG** (np. 200) |
-| 7 | Kliknij **Zapisz** przy polu DG |
+### 4.5. Procedura dodawania pracownika
 
-### Monitorowanie limitów
+**Wykonuje:** Mistrz, Administrator  
+**Częstotliwość:** Według potrzeb
 
-| Krok | Akcja |
-|------|-------|
-| 1 | Przejdź do **Wprowadzanie Danych** |
-| 2 | Sprawdź kolumnę **Limit** |
-| 3 | Wartości < 20 pulsują na czerwono |
-| 4 | Wartości ujemne = przekroczenie |
-
-### Powiadomienia email
-
-System automatycznie wysyła email gdy:
-- Pracownik przekroczy limit (wartość < 0)
-- Email wysyłany do wszystkich adresów z listy powiadomień
-
-### Konfiguracja powiadomień
-
-| Krok | Akcja |
-|------|-------|
-| 1 | Panel Admina → **Powiadomienia mailowe** |
-| 2 | Wpisz adres email |
-| 3 | Kliknij **Dodaj** |
-| 4 | Powtórz dla wszystkich odbiorców |
-
----
-
-## 6. Procedura obsługi alertów
-
-### Alert: Braki kadrowe jutro
-
-| Krok | Akcja |
-|------|-------|
-| 1 | Sprawdź listę nieobecnych jutro |
-| 2 | Zidentyfikuj typ nieobecności (urlop, L4, etc.) |
-| 3 | Zaplanuj zastępstwa |
-| 4 | Poinformuj zespół |
-
-### Alert: Powtarzające się nieobecności
-
-| Krok | Akcja |
-|------|-------|
-| 1 | Sprawdź listę pracowników |
-| 2 | Przeanalizuj wzorzec nieobecności |
-| 3 | Rozważ rozmowę z pracownikiem |
-| 4 | Udokumentuj ustalenia |
-
-### Alert: Limit urlopu
-
-| Krok | Akcja |
-|------|-------|
-| 1 | Sprawdź listę pracowników |
-| 2 | Skontaktuj się z pracownikiem |
-| 3 | Zaplanuj wykorzystanie urlopu |
-
-### Alert: Przekroczenie limitu godzin
-
-| Krok | Akcja |
-|------|-------|
-| 1 | Zidentyfikuj pracownika |
-| 2 | Sprawdź szczegóły (ile godzin przekroczono) |
-| 3 | Ogranicz dalsze godziny pracy |
-| 4 | Skontaktuj się z działem HR/kadr |
-| 5 | Udokumentuj sytuację |
-
----
-
-## 7. Procedura dodawania pracownika
-
-### Kto wykonuje
-Mistrz, Admin
-
-### Kroki
-
-| Krok | Akcja | Uwagi |
-|------|-------|-------|
+| Krok | Czynność | Uwagi |
+|:----:|----------|-------|
 | 1 | Przejdź do **Wprowadzanie Danych** | |
 | 2 | Wybierz halę pracownika | |
 | 3 | Przewiń na dół strony | Formularz dodawania |
@@ -244,146 +228,158 @@ Mistrz, Admin
 | 7 | Wypełnij **Stanowisko** | |
 | 8 | Wybierz **Formę zatrudnienia** | Etat / Agencja / DG |
 | 9 | Kliknij **Dodaj pracownika** | |
-| 10 | Sprawdź czy pracownik pojawił się na liście | |
+| 10 | Zweryfikuj czy pracownik pojawił się na liście | |
 
-### Weryfikacja
+### 4.6. Procedura usuwania pracownika
 
-- [ ] Pracownik widoczny w tabeli
-- [ ] Dane poprawne
-- [ ] Forma zatrudnienia prawidłowa
+**Wykonuje:** Administrator  
+**Częstotliwość:** Według potrzeb
 
----
-
-## 8. Procedura usuwania pracownika
-
-### Kto wykonuje
-Tylko Administrator
-
-### Kroki
-
-| Krok | Akcja | Uwagi |
-|------|-------|-------|
+| Krok | Czynność | Uwagi |
+|:----:|----------|-------|
 | 1 | Przejdź do **Panel Admina** | |
-| 2 | Sekcja **Baza pracowników** | |
+| 2 | Wybierz sekcję **Baza pracowników** | |
 | 3 | Znajdź pracownika (użyj filtrów) | |
 | 4 | Kliknij **Usuń** przy pracowniku | |
 | 5 | Potwierdź usunięcie | ⚠️ Operacja nieodwracalna |
 
-### Uwagi
+**UWAGA:** Usunięcie pracownika powoduje usunięcie całej jego historii obecności!
 
-⚠️ **WAŻNE:** Usunięcie pracownika usuwa również jego historię obecności!
+### 4.7. Procedura tworzenia użytkownika
 
-Rozważ alternatywę:
-- Przeniesienie do nieaktywnej hali
-- Zmiana statusu zamiast usunięcia
+**Wykonuje:** Administrator  
+**Częstotliwość:** Według potrzeb
 
----
-
-## 9. Procedura tworzenia użytkownika
-
-### Kto wykonuje
-Tylko Administrator
-
-### Kroki
-
-| Krok | Akcja | Uwagi |
-|------|-------|-------|
+| Krok | Czynność | Uwagi |
+|:----:|----------|-------|
 | 1 | Przejdź do **Panel Admina** | |
-| 2 | Sekcja **Zarządzanie użytkownikami** | |
+| 2 | Wybierz sekcję **Zarządzanie użytkownikami** | |
 | 3 | Wypełnij **Login** | Unikalny |
-| 4 | Wypełnij **Hasło** | Min. 6 znaków |
+| 4 | Wypełnij **Hasło** | Minimum 6 znaków |
 | 5 | Wybierz **Rolę** | Admin / Mistrz / Brygadzista / Gość |
-| 6 | Wybierz **Halę** (dla Mistrza/Brygadzisty) | |
-| 7 | Opcjonalnie: **Nr pracownika** | Powiązanie z pracownikiem |
-| 8 | Kliknij **Dodaj użytkownika** | |
-| 9 | Przekaż dane logowania użytkownikowi | Bezpiecznie! |
+| 6 | Wybierz **Halę** | Dla Mistrza/Brygadzisty |
+| 7 | Kliknij **Dodaj użytkownika** | |
+| 8 | Przekaż dane logowania użytkownikowi | W sposób bezpieczny |
 
-### Role i uprawnienia
+### 4.8. Procedura eksportu danych
 
-| Rola | Uprawnienia |
-|------|-------------|
-| Admin | Pełny dostęp |
-| Mistrz | Wprowadzanie danych, podgląd |
-| Brygadzista | Wprowadzanie danych (ograniczone) |
-| Gość | Tylko podgląd |
+**Wykonuje:** Administrator, Mistrz  
+**Częstotliwość:** Według potrzeb
 
----
+#### 4.8.1. Eksport karty obecności
 
-## 10. Procedura eksportu danych
-
-### Eksport karty obecności
-
-| Krok | Akcja |
-|------|-------|
+| Krok | Czynność |
+|:----:|----------|
 | 1 | Przejdź do **Wprowadzanie Danych** |
 | 2 | Wybierz halę |
 | 3 | Wybierz miesiąc |
-| 4 | Kliknij ikonę **📥 Eksport Excel** |
+| 4 | Kliknij przycisk **📥 Eksport Excel** |
 | 5 | Zapisz plik |
 
-### Eksport logów systemowych
+#### 4.8.2. Eksport logów systemowych (tylko Administrator)
 
-| Krok | Akcja |
-|------|-------|
+| Krok | Czynność |
+|:----:|----------|
 | 1 | Przejdź do **Panel Admina** |
-| 2 | Sekcja **Logi systemowe** |
+| 2 | Wybierz sekcję **Logi systemowe** |
 | 3 | Wybierz miesiąc |
 | 4 | Kliknij **Eksport Excel** |
 | 5 | Zapisz plik |
 
-### Nazewnictwo plików
+**Zalecane nazewnictwo plików:**
+- `ProAbsence_[NazwaHali]_[RRRR-MM].xlsx`
+- `ProAbsence_Logi_[RRRR-MM].xlsx`
 
-Zalecane nazewnictwo:
-- `ProAbsence_Hala1_2026-05.xlsx`
-- `ProAbsence_Logi_2026-05.xlsx`
+### 4.9. Procedura awaryjna
 
----
+#### 4.9.1. System nie odpowiada
 
-## 11. Procedura awaryjna
-
-### System nie odpowiada
-
-| Krok | Akcja |
-|------|-------|
-| 1 | Odśwież stronę (F5) |
-| 2 | Wyczyść cache (Ctrl+Shift+Delete) |
+| Krok | Czynność |
+|:----:|----------|
+| 1 | Odśwież stronę (klawisz F5) |
+| 2 | Wyczyść cache przeglądarki (Ctrl+Shift+Delete) |
 | 3 | Spróbuj innej przeglądarki |
-| 4 | Skontaktuj się z IT |
+| 4 | Skontaktuj się z działem IT |
 
-### Błąd logowania
+#### 4.9.2. Błąd logowania
 
-| Krok | Akcja |
-|------|-------|
+| Krok | Czynność |
+|:----:|----------|
 | 1 | Sprawdź poprawność loginu i hasła |
 | 2 | Sprawdź czy Caps Lock jest wyłączony |
-| 3 | Skontaktuj się z administratorem |
+| 3 | Skontaktuj się z Administratorem systemu |
 
-### Dane nie zapisują się
+#### 4.9.3. Utrata danych
 
-| Krok | Akcja |
-|------|-------|
-| 1 | Sprawdź połączenie internetowe |
-| 2 | Odśwież stronę |
-| 3 | Spróbuj ponownie |
-| 4 | Skontaktuj się z IT |
+| Krok | Czynność |
+|:----:|----------|
+| 1 | Zachowaj spokój |
+| 2 | Skontaktuj się z Administratorem systemu |
+| 3 | Administrator przywróci dane z kopii zapasowej |
 
-### Utrata danych
-
-| Krok | Akcja |
-|------|-------|
-| 1 | **NIE PANIKUJ** |
-| 2 | Skontaktuj się z administratorem |
-| 3 | System posiada automatyczne kopie zapasowe |
-| 4 | Administrator przywróci dane z backupu |
+**Uwaga:** System automatycznie tworzy kopie zapasowe co 24 godziny (ostatnie 7 kopii).
 
 ---
 
-## Kontakt
+## 5. DOKUMENTY POWIĄZANE
 
-**Administrator systemu:**  
-Sebastian Serafin  
-Email: sebastian.serafin@imcpoland.pl
+| Dokument | Opis |
+|----------|------|
+| INSTRUKCJA_UZYTKOWNIKA.md | Szczegółowa instrukcja obsługi systemu dla użytkowników |
+| PROCEDURA_WDROZENIA.md | Procedura wdrożenia systemu na serwerze (dla IT) |
+| README.md | Skrócona instrukcja wdrożenia |
+| docker-compose.yml | Konfiguracja kontenerów Docker |
+| env.txt | Plik konfiguracyjny zmiennych środowiskowych |
 
 ---
 
-*ProAbsence v1.0.0 © 2026 Sebastian Serafin*
+## 6. DEFINICJE I TERMINOLOGIA
+
+| Termin | Definicja |
+|--------|-----------|
+| **ProAbsence** | System informatyczny do zarządzania obecnością pracowników |
+| **Hala** | Jednostka organizacyjna (hala produkcyjna) w systemie |
+| **Karta obecności** | Tabela z danymi o obecności pracowników w danym miesiącu |
+| **Limit godzin** | Maksymalna liczba godzin pracy w miesiącu dla pracowników Agencja/DG |
+| **Agencja** | Forma zatrudnienia - pracownik z agencji pracy tymczasowej |
+| **DG** | Forma zatrudnienia - pracownik na umowie cywilnoprawnej |
+| **Etat** | Forma zatrudnienia - pracownik na umowie o pracę |
+| **Administrator** | Użytkownik z pełnymi uprawnieniami do zarządzania systemem |
+| **Mistrz** | Użytkownik odpowiedzialny za wprowadzanie danych w przypisanych halach |
+| **Brygadzista** | Użytkownik z ograniczonymi uprawnieniami do wprowadzania danych |
+| **Gość** | Użytkownik z uprawnieniami tylko do podglądu |
+| **Alert** | Automatyczne powiadomienie systemowe o zdarzeniu wymagającym uwagi |
+| **Backup** | Kopia zapasowa bazy danych systemu |
+| **Eksport** | Zapisanie danych z systemu do pliku Excel |
+
+### Kody nieobecności
+
+| Kod | Pełna nazwa |
+|-----|-------------|
+| UW | Urlop wypoczynkowy |
+| CH | Chorobowe |
+| L4 | Zwolnienie lekarskie (synonim CH) |
+| NŻ | Nieobecność nieusprawiedliwiona |
+| OP | Opieka nad dzieckiem |
+| KR | Oddawanie krwi |
+| BL | Urlop bezpłatny |
+
+---
+
+## 7. HISTORIA ZMIAN
+
+| Wersja | Data | Autor | Opis zmian |
+|:------:|:----:|-------|------------|
+| 1.0 | 13.05.2026 | Sebastian Serafin | Wydanie pierwsze procedury |
+
+---
+
+**Zatwierdzono do stosowania:**
+
+Data: 13.05.2026
+
+Podpis: _________________________
+
+---
+
+*ProAbsence v1.0.0 © 2026 IMC Poland*
