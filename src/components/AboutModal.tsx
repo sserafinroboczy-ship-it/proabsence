@@ -58,7 +58,7 @@ export default function AboutModal({ onClose }: AboutModalProps) {
                 Kopiowanie, modyfikowanie, dystrybucja oraz rozpowszechnianie kodu źródłowego lub elementów interfejsu bez wyraźnej zgody autora jest surowo zabronione i podlega ochronie prawnej.
               </p>
               <p>
-                Wersja oprogramowania: <strong>1.0.0</strong>
+                Wersja oprogramowania: <strong>1.0.1</strong>
               </p>
             </div>
           </section>
