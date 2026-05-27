@@ -176,7 +176,7 @@ export default function Login({ onLogin, onShowAbout }: { onLogin: (user: any) =
         )}
         
         <div className="mt-8 flex items-center justify-between text-sm text-slate-500 border-t border-slate-100 pt-6">
-          <span className="font-medium">Wersja 1.0.2</span>
+          <span className="font-medium">Wersja 1.0.3</span>
           <button 
             onClick={onShowAbout}
             type="button"

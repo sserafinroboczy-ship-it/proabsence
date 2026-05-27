@@ -37,7 +37,7 @@ function createBackup() {
   ensureBackupDir();
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(BACKUP_DIR, `database_${timestamp}.sqlite`);
-  const sourcePath = path.join(process.cwd(), "database.sqlite");
+  const sourcePath = path.join(process.cwd(), "data", "database.sqlite");
   
   try {
     if (fs.existsSync(sourcePath)) {

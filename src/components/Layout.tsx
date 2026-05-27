@@ -96,7 +96,7 @@ export default function Layout({ user, onLogout, onShowAbout }: { user: any; onL
             })</p>
           </div>
           <div className="mb-3 px-4 text-center">
-            <p className="text-xs text-slate-300 font-medium bg-slate-800 py-1 px-3 rounded-full inline-block">Wersja 1.0.2</p>
+            <p className="text-xs text-slate-300 font-medium bg-slate-800 py-1 px-3 rounded-full inline-block">Wersja 1.0.3</p>
           </div>
           <button
             onClick={onShowAbout}

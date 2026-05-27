@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import bcrypt from "bcryptjs";
 import path from "path";
 
-const db = new Database(path.join(process.cwd(), "database.sqlite"));
+const db = new Database(path.join(process.cwd(), "data", "database.sqlite"));
 
 db.pragma("journal_mode = WAL");
 
