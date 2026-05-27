@@ -20,20 +20,20 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     if (token) {
       fetchApi("/api/auth/me")
         .then((data) => {
           if (data.user.force_password_change) {
             // If user needs to change password, log them out and let them login again to see the form
-            localStorage.removeItem("token");
+            sessionStorage.removeItem("token");
             setUser(null);
           } else {
             setUser(data.user);
           }
         })
         .catch(() => {
-          localStorage.removeItem("token");
+          sessionStorage.removeItem("token");
           setUser(null);
         })
         .finally(() => setLoading(false));
@@ -51,7 +51,7 @@ export default function App() {
           <Route path="/login" element={!user ? <Login onLogin={setUser} onShowAbout={() => setShowAbout(true)} /> : <Navigate to="/" />} />
           
           {user ? (
-            <Route element={<Layout user={user} onLogout={() => { localStorage.removeItem("token"); setUser(null); }} onShowAbout={() => setShowAbout(true)} />}>
+            <Route element={<Layout user={user} onLogout={() => { sessionStorage.removeItem("token"); setUser(null); }} onShowAbout={() => setShowAbout(true)} />}>
               {user.role === "admin" && <Route path="/" element={<Dashboard />} />}
               <Route path="/foreman" element={<Foreman user={user} />} />
               <Route path="/calendar" element={<CalendarView user={user} />} />

@@ -1,4 +1,4 @@
-export const getToken = () => localStorage.getItem("token");
+export const getToken = () => sessionStorage.getItem("token");
 
 export const fetchApi = async (url: string, options: RequestInit = {}) => {
   const token = getToken();
