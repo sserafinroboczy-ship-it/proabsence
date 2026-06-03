@@ -11,6 +11,7 @@ import Dashboard from "./pages/Dashboard";
 import Admin from "./pages/Admin";
 import Foreman from "./pages/Foreman";
 import CalendarView from "./pages/CalendarView";
+import Chat from "./pages/Chat";
 import Layout from "./components/Layout";
 import AboutModal from "./components/AboutModal";
 
@@ -55,6 +56,7 @@ export default function App() {
               {user.role === "admin" && <Route path="/" element={<Dashboard />} />}
               <Route path="/foreman" element={<Foreman user={user} />} />
               <Route path="/calendar" element={<CalendarView user={user} />} />
+              <Route path="/chat" element={<Chat user={user} />} />
               {user.role === "admin" && <Route path="/admin" element={<Admin />} />}
               <Route path="*" element={<Navigate to={user.role === "admin" ? "/" : "/foreman"} />} />
             </Route>

@@ -1,19 +1,86 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { fetchApi } from "../lib/api";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isSameDay } from "date-fns";
 import { pl } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from "recharts";
 import * as XLSX from "xlsx";
-import { Plus, Trash2, UserPlus, X, ArrowLeftRight } from "lucide-react";
+import { Plus, Trash2, UserPlus, X, ArrowLeftRight, ArrowRightLeft, Pencil, Check } from "lucide-react";
+
+// Algorytm obliczania daty Wielkanocy (Meeus/Jones/Butcher)
+const getEasterDate = (year: number): Date => {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+};
+
+// Pobierz wszystkie święta ruchome dla danego roku
+const getMovableHolidays = (year: number): Date[] => {
+  const easter = getEasterDate(year);
+  const holidays: Date[] = [];
+  
+  // Wielkanoc (niedziela)
+  holidays.push(new Date(easter));
+  
+  // Poniedziałek Wielkanocny (Easter + 1)
+  const easterMonday = new Date(easter);
+  easterMonday.setDate(easter.getDate() + 1);
+  holidays.push(easterMonday);
+  
+  // Zielone Świątki / Zesłanie Ducha Świętego (Easter + 49)
+  const pentecost = new Date(easter);
+  pentecost.setDate(easter.getDate() + 49);
+  holidays.push(pentecost);
+  
+  // Boże Ciało (Easter + 60)
+  const corpusChristi = new Date(easter);
+  corpusChristi.setDate(easter.getDate() + 60);
+  holidays.push(corpusChristi);
+  
+  return holidays;
+};
 
 const isHoliday = (date: Date) => {
+  const year = date.getFullYear();
   const month = date.getMonth() + 1;
   const day = date.getDate();
+  
+  // Święta stałe w Polsce
   const fixedHolidays = [
-    "1-1", "1-6", "5-1", "5-3", "8-15", "11-1", "11-11", "12-25", "12-26"
+    "1-1",   // Nowy Rok
+    "1-6",   // Trzech Króli
+    "5-1",   // Święto Pracy
+    "5-3",   // Święto Konstytucji 3 Maja
+    "8-15",  // Wniebowzięcie NMP
+    "11-1",  // Wszystkich Świętych
+    "11-11", // Święto Niepodległości
+    "12-25", // Boże Narodzenie
+    "12-26"  // Drugi dzień Bożego Narodzenia
   ];
-  // Note: Easter and Corpus Christi are movable, but this covers fixed ones.
-  return fixedHolidays.includes(`${month}-${day}`);
+  
+  if (fixedHolidays.includes(`${month}-${day}`)) {
+    return true;
+  }
+  
+  // Święta ruchome
+  const movableHolidays = getMovableHolidays(year);
+  return movableHolidays.some(holiday => 
+    holiday.getFullYear() === year &&
+    holiday.getMonth() === date.getMonth() &&
+    holiday.getDate() === day
+  );
 };
 
 const isFreeDay = (date: Date) => isWeekend(date) || isHoliday(date);
@@ -29,29 +96,47 @@ export default function Foreman({ user }: { user: any }) {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<number | null>(null);
   const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat" });
   const [transferringEmployeeId, setTransferringEmployeeId] = useState<number | null>(null);
+  const [editingEmployee, setEditingEmployee] = useState<any | null>(null);
   const [allHalls, setAllHalls] = useState<any[]>([]);
   const [scrollPositions, setScrollPositions] = useState<Record<number, number>>({});
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  const scrollbarRef = useRef<HTMLDivElement>(null);
+  const tableCardRef = useRef<HTMLDivElement>(null);
+  const [tableWidth, setTableWidth] = useState(0);
+  const [showFixedScrollbar, setShowFixedScrollbar] = useState(false);
   const [settings, setSettings] = useState<{hours_limit_agencja: number, hours_limit_dg: number}>({
     hours_limit_agencja: 200,
     hours_limit_dg: 200
   });
+  const [activeHall, setActiveHall] = useState<any>(null);
+  const [draggedEmployeeId, setDraggedEmployeeId] = useState<number | null>(null);
+  const [dragOverEmployeeId, setDragOverEmployeeId] = useState<number | null>(null);
 
   useEffect(() => {
     fetchApi("/api/halls").then(data => {
       // Zapisz wszystkie aktywne hale (do przenoszenia pracowników)
       setAllHalls(data.filter((h: any) => h.is_active));
       
-      const availableHalls = (user.role === "admin" || user.role === "mistrz") && !user.hall_id
+      // Mistrzowie i brygadziści widzą wszystkie hale (mogą zastępować innych)
+      const availableHalls = (user.role === "admin" || user.role === "mistrz" || user.role === "foreman")
         ? data.filter((h: any) => h.is_active)
         : data.filter((h: any) => h.id === user.hall_id && h.is_active);
 
       setHalls(availableHalls);
       if (availableHalls.length > 0) {
         setActiveHallId(availableHalls[0].id);
+        setActiveHall(availableHalls[0]);
       }
     }).catch(err => setError("Nie udało się pobrać listy hal."));
   }, [user]);
+
+  // Aktualizuj activeHall gdy zmienia się activeHallId
+  useEffect(() => {
+    if (activeHallId && halls.length > 0) {
+      const hall = halls.find(h => h.id === activeHallId);
+      setActiveHall(hall || null);
+    }
+  }, [activeHallId, halls]);
 
   const loadAbsences = async () => {
     if (activeHallId) {
@@ -95,6 +180,104 @@ export default function Foreman({ user }: { user: any }) {
       setAbsences([]);
     }
   }, [activeHallId, selectedMonth]);
+
+  // Synchronizacja scrollowania między tabelą a sticky scrollbar
+  useEffect(() => {
+    const tableScroll = tableScrollRef.current;
+    const scrollbar = scrollbarRef.current;
+    
+    if (!tableScroll) return;
+    
+    // Ustaw szerokość scrollbar
+    const updateWidth = () => {
+      if (tableScroll.scrollWidth > 0) {
+        setTableWidth(tableScroll.scrollWidth);
+      }
+    };
+    updateWidth();
+    
+    // Obserwuj zmiany rozmiaru
+    const resizeObserver = new ResizeObserver(updateWidth);
+    resizeObserver.observe(tableScroll);
+    
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [employees, selectedMonth]);
+
+  // Osobny useEffect dla synchronizacji scroll - uruchamia się gdy scrollbar jest widoczny
+  useEffect(() => {
+    const tableScroll = tableScrollRef.current;
+    const scrollbar = scrollbarRef.current;
+    
+    if (!tableScroll || !scrollbar || !showFixedScrollbar) return;
+    
+    let isScrollingTable = false;
+    let isScrollingScrollbar = false;
+    
+    const handleTableScroll = () => {
+      if (isScrollingScrollbar) return;
+      isScrollingTable = true;
+      scrollbar.scrollLeft = tableScroll.scrollLeft;
+      setTimeout(() => { isScrollingTable = false; }, 50);
+    };
+    
+    const handleScrollbarScroll = () => {
+      if (isScrollingTable) return;
+      isScrollingScrollbar = true;
+      tableScroll.scrollLeft = scrollbar.scrollLeft;
+      setTimeout(() => { isScrollingScrollbar = false; }, 50);
+    };
+    
+    tableScroll.addEventListener('scroll', handleTableScroll);
+    scrollbar.addEventListener('scroll', handleScrollbarScroll);
+    
+    // Synchronizuj pozycję na starcie
+    scrollbar.scrollLeft = tableScroll.scrollLeft;
+    
+    return () => {
+      tableScroll.removeEventListener('scroll', handleTableScroll);
+      scrollbar.removeEventListener('scroll', handleScrollbarScroll);
+    };
+  }, [showFixedScrollbar]);
+
+  // Pokaż/ukryj fixed scrollbar w zależności od widoczności tabeli
+  useEffect(() => {
+    const tableCard = tableCardRef.current;
+    const tableScroll = tableScrollRef.current;
+    
+    if (!tableCard || !tableScroll || employees.length === 0) {
+      setShowFixedScrollbar(false);
+      return;
+    }
+    
+    // Ustaw szerokość od razu
+    setTableWidth(tableScroll.scrollWidth);
+    
+    const checkVisibility = () => {
+      const rect = tableCard.getBoundingClientRect();
+      const windowHeight = window.innerHeight;
+      // Pokaż scrollbar gdy tabela jest widoczna na ekranie
+      const isVisible = rect.top < windowHeight && rect.bottom > 50;
+      setShowFixedScrollbar(isVisible);
+      
+      // Aktualizuj szerokość
+      if (tableScroll.scrollWidth > 0) {
+        setTableWidth(tableScroll.scrollWidth);
+      }
+    };
+    
+    // Opóźnij pierwsze sprawdzenie aby DOM się załadował
+    setTimeout(checkVisibility, 100);
+    
+    window.addEventListener('scroll', checkVisibility);
+    window.addEventListener('resize', checkVisibility);
+    
+    return () => {
+      window.removeEventListener('scroll', checkVisibility);
+      window.removeEventListener('resize', checkVisibility);
+    };
+  }, [employees, selectedMonth, activeHallId]);
 
   // Zapisz pozycję scrolla przed zmianą hali
   const handleHallChange = (hallId: number) => {
@@ -203,7 +386,7 @@ export default function Foreman({ user }: { user: any }) {
     e.preventDefault();
     if (!activeHallId) return;
     if (!newEmployee.first_name || !newEmployee.last_name) {
-      setError("Imię i nazwisko są wymagane.");
+      setError("Nazwisko i imię są wymagane.");
       return;
     }
 
@@ -227,6 +410,29 @@ export default function Foreman({ user }: { user: any }) {
       setConfirmingDeleteId(null);
     } catch (err: any) {
       setError(err.message || "Błąd usuwania pracownika");
+    }
+  };
+
+  const handleEditEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEmployee) return;
+    
+    try {
+      await fetchApi(`/api/employees/${editingEmployee.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          first_name: editingEmployee.first_name,
+          last_name: editingEmployee.last_name,
+          position: editingEmployee.position,
+          employee_number: editingEmployee.employee_number,
+          employment_type: editingEmployee.employment_type,
+          hall_id: editingEmployee.hall_id
+        })
+      });
+      setEditingEmployee(null);
+      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+    } catch (err: any) {
+      setError(err.message || "Błąd edycji pracownika");
     }
   };
 
@@ -258,6 +464,117 @@ export default function Foreman({ user }: { user: any }) {
     }
   };
 
+  const handleChangeShift = async (empId: number, newShift: number) => {
+    try {
+      await fetchApi(`/api/employees/${empId}/shift`, {
+        method: "PUT",
+        body: JSON.stringify({ shift: newShift })
+      });
+      // Aktualizuj lokalnie
+      setEmployees(employees.map(e => e.id === empId ? { ...e, shift: newShift } : e));
+    } catch (err: any) {
+      setError(err.message || "Błąd zmiany zmiany pracownika");
+    }
+  };
+
+  const handleRotateShifts = async () => {
+    if (!activeHallId) return;
+    try {
+      await fetchApi(`/api/halls/${activeHallId}/rotate-shifts`, { method: "POST" });
+      // Odśwież listę pracowników
+      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+    } catch (err: any) {
+      setError(err.message || "Błąd rotacji zmian");
+    }
+  };
+
+  // Drag & drop - zmiana kolejności pracowników
+  const draggedEmpIdRef = useRef<number | null>(null);
+  
+  const handleDragStart = (e: React.DragEvent, empId: number) => {
+    draggedEmpIdRef.current = empId;
+    setDraggedEmployeeId(empId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', empId.toString());
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    setDraggedEmployeeId(null);
+    setDragOverEmployeeId(null);
+    draggedEmpIdRef.current = null;
+  };
+
+  const handleDragOver = (e: React.DragEvent, empId: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (draggedEmployeeId !== empId) {
+      setDragOverEmployeeId(empId);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverEmployeeId(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetEmpId: number) => {
+    e.preventDefault();
+    
+    const currentDraggedId = draggedEmpIdRef.current;
+    
+    if (!currentDraggedId || currentDraggedId === targetEmpId) {
+      setDraggedEmployeeId(null);
+      setDragOverEmployeeId(null);
+      draggedEmpIdRef.current = null;
+      return;
+    }
+
+    // Znajdź indeksy
+    const draggedIndex = employees.findIndex(emp => emp.id === currentDraggedId);
+    const targetIndex = employees.findIndex(emp => emp.id === targetEmpId);
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedEmployeeId(null);
+      setDragOverEmployeeId(null);
+      draggedEmpIdRef.current = null;
+      return;
+    }
+
+    // Przenieś pracownika w nowe miejsce
+    const newEmployees = [...employees];
+    const [draggedEmp] = newEmployees.splice(draggedIndex, 1);
+    newEmployees.splice(targetIndex, 0, draggedEmp);
+
+    // Zaktualizuj kolejność (sort_order) dla wszystkich pracowników
+    const updatedEmployees = newEmployees.map((emp, index) => ({
+      ...emp,
+      sort_order: index
+    }));
+
+    setEmployees(updatedEmployees);
+
+    // Zapisz nową kolejność na serwerze
+    try {
+      await fetchApi('/api/employees/reorder', {
+        method: 'POST',
+        body: JSON.stringify({
+          hall_id: activeHallId,
+          order: updatedEmployees.map(emp => emp.id)
+        })
+      });
+    } catch (err: any) {
+      console.error('Błąd zapisywania kolejności:', err);
+      // Przywróć poprzednią kolejność w razie błędu
+      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+    }
+
+    setDraggedEmployeeId(null);
+    setDragOverEmployeeId(null);
+    draggedEmpIdRef.current = null;
+  };
+
+  // Liczba zmian dla aktywnej hali
+  const shiftCount = activeHall?.shift_count || 2;
+
   if (user.role === "guest") return <div className="p-8 text-gray-500">Brak dostępu</div>;
 
   const daysInMonth = eachDayOfInterval({
@@ -265,7 +582,7 @@ export default function Foreman({ user }: { user: any }) {
     end: endOfMonth(new Date(selectedMonth))
   });
 
-  // Calculate summary for the whole month
+  // Calculate summary for the whole month (tylko pracownicy produkcyjni, bez nadzoru)
   let totalVacation = 0;
   let totalSick = 0;
   let totalUnplanned = 0;
@@ -278,10 +595,15 @@ export default function Foreman({ user }: { user: any }) {
   let hallTotalOvertime = 0;
   
   // Liczymy tylko dni robocze (pon-pt, bez świąt) do frekwencji
+  // Tylko pracownicy produkcyjni (bez nadzoru)
+  const productionEmployees = employees.filter(e => !e.is_supervisor);
   const workingDaysCount = daysInMonth.filter(d => !isFreeDay(d)).length;
-  let totalExpectedDays = employees.length * workingDaysCount;
+  let totalExpectedDays = productionEmployees.length * workingDaysCount;
 
-  absences.forEach(a => {
+  // Filtruj absences tylko dla pracowników produkcyjnych
+  const productionEmployeeIds = new Set(productionEmployees.map(e => e.id));
+  
+  absences.filter(a => productionEmployeeIds.has(a.employee_id)).forEach(a => {
     if (a.type === "vacation") totalVacation++;
     else if (a.type === "sick") totalSick++;
     else if (a.type === "unplanned") totalUnplanned++;
@@ -289,8 +611,11 @@ export default function Foreman({ user }: { user: any }) {
     else if (a.type === "blood") totalBlood++;
     else if (a.type === "unpaid") totalUnpaid++;
     else if (a.type === "present") {
+      // Używamy employment_type z absences (zawiera dane usuniętych pracowników)
+      // Fallback do employees dla kompatybilności wstecznej
       const emp = employees.find(e => e.id === a.employee_id);
-      const isAgencyOrDG = emp?.employment_type === 'Agencja' || emp?.employment_type === 'DG';
+      const employmentType = a.employment_type || emp?.employment_type;
+      const isAgencyOrDG = employmentType === 'Agencja' || employmentType === 'DG';
       
       const workingHours = a.working_hours || 0;
       const overtimeHours = a.overtime_hours || 0;
@@ -361,7 +686,7 @@ export default function Foreman({ user }: { user: any }) {
     const data = employees.map(emp => {
       const row: any = {
         "Nr": emp.employee_number || '',
-        "Pracownik": `${emp.first_name} ${emp.last_name}`,
+        "Pracownik": `${emp.last_name} ${emp.first_name}`,
         "Stanowisko": emp.position,
         "Forma": emp.employment_type || 'Etat'
       };
@@ -401,6 +726,7 @@ export default function Foreman({ user }: { user: any }) {
       row["Limit"] = remainingLimit !== null ? remainingLimit : '-';
       row["Suma Godz"] = totalHours;
       row["Suma Nadg"] = totalOvertime;
+      row["Razem"] = totalHours + totalOvertime;
       row["UW"] = sumUW;
       row["CH"] = sumCH;
       row["NŻ"] = sumNZ;
@@ -490,13 +816,25 @@ export default function Foreman({ user }: { user: any }) {
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div ref={tableCardRef} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50 gap-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-800">Karta Obecności</h3>
             <p className="text-sm text-gray-500">Wpisz godziny (np. 8, 10) lub status</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            {shiftCount > 1 && (
+              <button
+                onClick={handleRotateShifts}
+                className="flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700 bg-indigo-100 hover:bg-indigo-200 px-3 py-1.5 rounded-md transition-colors"
+                title="Rotuj wszystkie zmiany (1→2→3→1)"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Rotuj zmiany
+              </button>
+            )}
             <button
               onClick={() => setIsAddingEmployee(true)}
               className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
@@ -538,16 +876,20 @@ export default function Foreman({ user }: { user: any }) {
           </div>
         </div>
 
-        <div ref={tableScrollRef} className="overflow-x-auto overflow-y-hidden">
+        <div ref={tableScrollRef} className={`overflow-x-auto overflow-y-hidden ${showFixedScrollbar ? 'hide-native-scrollbar' : ''}`}>
           <table className="w-full text-left text-sm attendance-table">
             <thead>
               <tr className="bg-gray-100 text-gray-600 border-b border-gray-200">
-                <th className="p-2 font-semibold min-w-[60px] w-[60px] sticky-col-0-header">Nr</th>
-                <th className="p-2 font-semibold min-w-[150px] w-[150px] sticky-col-1-header">Pracownik</th>
-                <th className="p-2 font-semibold min-w-[100px] w-[100px] sticky-col-2-header">Stanowisko</th>
-                <th className="p-2 font-semibold min-w-[60px] w-[60px] text-center sticky-col-forma-header" title="Forma zatrudnienia">Forma</th>
-                <th className="p-2 font-semibold text-center min-w-[40px] w-[40px] sticky-col-3-header" title="Przesuń na inną halę">↔</th>
-                <th className="p-2 font-semibold text-center min-w-[50px] w-[50px] sticky-col-4-header">Akcja</th>
+                {shiftCount > 1 && (
+                  <th className="p-2 font-semibold min-w-[40px] w-[40px] text-center sticky-col-shift-header" title="Zmiana">Zm</th>
+                )}
+                <th className={`p-2 font-semibold min-w-[60px] w-[60px] ${shiftCount > 1 ? 'sticky-col-0-header-shifted' : 'sticky-col-0-header'}`}>Nr</th>
+                <th className={`p-2 font-semibold whitespace-nowrap min-w-[180px] ${shiftCount > 1 ? 'sticky-col-1-header-shifted' : 'sticky-col-1-header'}`}>Pracownik</th>
+                <th className={`p-2 font-semibold min-w-[100px] w-[100px] ${shiftCount > 1 ? 'sticky-col-2-header-shifted' : 'sticky-col-2-header'}`}>Stanowisko</th>
+                <th className={`p-2 font-semibold min-w-[60px] w-[60px] text-center ${shiftCount > 1 ? 'sticky-col-forma-header-shifted' : 'sticky-col-forma-header'}`} title="Forma zatrudnienia">Forma</th>
+                <th className={`p-2 font-semibold text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-edit-header-shifted' : 'sticky-col-edit-header'}`} title="Edytuj pracownika">✏️</th>
+                <th className={`p-2 font-semibold text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-3-header-shifted' : 'sticky-col-3-header'}`} title="Przesuń na inną halę">↔</th>
+                <th className={`p-2 font-semibold text-center min-w-[50px] w-[50px] ${shiftCount > 1 ? 'sticky-col-4-header-shifted' : 'sticky-col-4-header'}`}>Akcja</th>
                 {daysInMonth.map(day => {
                   const isWknd = isFreeDay(day);
                   const isToday = isSameDay(day, new Date());
@@ -565,6 +907,7 @@ export default function Foreman({ user }: { user: any }) {
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-amber-50 text-amber-800" title="Pozostały limit godzin (Agencja/DG)">Limit</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-blue-50">Suma Godz</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-purple-50">Suma Nadg</th>
+                <th className="p-2 font-semibold text-center border-r border-gray-200 bg-green-100 text-green-800" title="Suma godzin + nadgodziny">Razem</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-blue-100 text-blue-800" title="Urlop Wypoczynkowy">UW</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-red-100 text-red-800" title="Chorobowe">CH</th>
                 <th className="p-2 font-semibold text-center border-r border-gray-200 bg-orange-100 text-orange-800" title="Nieplanowane">NŻ</th>
@@ -574,7 +917,8 @@ export default function Foreman({ user }: { user: any }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {employees.map(emp => {
+              {/* Sekcja: Pracownicy produkcyjni */}
+              {employees.filter(e => !e.is_supervisor).map(emp => {
                 const empAbsences = absences.filter(a => a.employee_id === emp.id);
                 const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
                 
@@ -601,17 +945,45 @@ export default function Foreman({ user }: { user: any }) {
                 const isLimitCritical = remainingLimit !== null && remainingLimit < 20;
 
                 return (
-                  <tr key={emp.id} className="group hover:bg-gray-50 transition-colors">
-                    <td className="p-2 text-gray-800 min-w-[60px] w-[60px] sticky-col-0 group-hover:!bg-gray-50">
+                  <tr 
+                    key={emp.id} 
+                    className={`group hover:bg-gray-50 transition-colors cursor-grab active:cursor-grabbing ${
+                      dragOverEmployeeId === emp.id ? 'bg-blue-100 border-t-2 border-blue-500' : ''
+                    } ${draggedEmployeeId === emp.id ? 'opacity-50' : ''}`}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, emp.id)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={(e) => handleDragOver(e, emp.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, emp.id)}
+                  >
+                    {shiftCount > 1 && (
+                      <td className="p-1 text-center min-w-[40px] w-[40px] sticky-col-shift group-hover:!bg-gray-50">
+                        <select
+                          value={emp.shift || 1}
+                          onChange={(e) => handleChangeShift(emp.id, parseInt(e.target.value))}
+                          className={`text-xs font-bold px-1 py-0.5 rounded-full border-0 cursor-pointer ${
+                            (emp.shift || 1) === 1 ? 'bg-blue-100 text-blue-700' :
+                            (emp.shift || 1) === 2 ? 'bg-green-100 text-green-700' :
+                            'bg-orange-100 text-orange-700'
+                          }`}
+                        >
+                          {[1, 2, 3].slice(0, shiftCount).map(s => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </td>
+                    )}
+                    <td className={`p-2 text-gray-800 min-w-[60px] w-[60px] ${shiftCount > 1 ? 'sticky-col-0-shifted' : 'sticky-col-0'} group-hover:!bg-gray-50`}>
                       {emp.employee_number || '-'}
                     </td>
-                    <td className="p-2 font-medium text-gray-800 min-w-[150px] w-[150px] sticky-col-1 group-hover:!bg-gray-50">
-                      {emp.first_name} {emp.last_name}
+                    <td className={`p-2 font-medium text-gray-800 whitespace-nowrap min-w-[180px] ${shiftCount > 1 ? 'sticky-col-1-shifted' : 'sticky-col-1'} group-hover:!bg-gray-50`}>
+                      {emp.last_name} {emp.first_name}
                     </td>
-                    <td className="p-2 text-gray-500 text-xs truncate min-w-[100px] w-[100px] sticky-col-2 group-hover:!bg-gray-50" title={emp.position}>
+                    <td className={`p-2 text-gray-500 text-xs truncate min-w-[100px] w-[100px] ${shiftCount > 1 ? 'sticky-col-2-shifted' : 'sticky-col-2'} group-hover:!bg-gray-50`} title={emp.position}>
                       {emp.position}
                     </td>
-                    <td className="p-1 text-center min-w-[60px] w-[60px] sticky-col-forma group-hover:!bg-gray-50">
+                    <td className={`p-1 text-center min-w-[60px] w-[60px] ${shiftCount > 1 ? 'sticky-col-forma-shifted' : 'sticky-col-forma'} group-hover:!bg-gray-50`}>
                       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
                         emp.employment_type === 'Agencja' ? 'bg-orange-100 text-orange-700' :
                         emp.employment_type === 'DG' ? 'bg-purple-100 text-purple-700' :
@@ -620,7 +992,17 @@ export default function Foreman({ user }: { user: any }) {
                         {emp.employment_type || 'Etat'}
                       </span>
                     </td>
-                    <td className="p-1 text-center min-w-[40px] w-[40px] sticky-col-3 group-hover:!bg-gray-50">
+                    <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-edit-shifted' : 'sticky-col-edit'} group-hover:!bg-gray-50`}>
+                      <button 
+                        type="button"
+                        onClick={() => setEditingEmployee({...emp})}
+                        className="text-amber-500 hover:text-amber-700 p-1 cursor-pointer"
+                        title="Edytuj pracownika"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    </td>
+                    <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-3-shifted' : 'sticky-col-3'} group-hover:!bg-gray-50`}>
                       <button 
                         type="button"
                         onClick={() => setTransferringEmployeeId(emp.id)}
@@ -630,7 +1012,7 @@ export default function Foreman({ user }: { user: any }) {
                         <ArrowLeftRight className="w-4 h-4" />
                       </button>
                     </td>
-                    <td className="p-1 text-center min-w-[50px] w-[50px] sticky-col-4 group-hover:!bg-gray-50">
+                    <td className={`p-1 text-center min-w-[50px] w-[50px] ${shiftCount > 1 ? 'sticky-col-4-shifted' : 'sticky-col-4'} group-hover:!bg-gray-50`}>
                       {confirmingDeleteId === emp.id ? (
                         <div className="flex flex-col items-center gap-1 p-0.5">
                           <button 
@@ -742,6 +1124,9 @@ export default function Foreman({ user }: { user: any }) {
                     <td className="p-2 text-center font-bold text-purple-700 border-r border-gray-200 bg-purple-50/50">
                       {totalOvertime > 0 ? totalOvertime : ""}
                     </td>
+                    <td className="p-2 text-center font-bold text-green-800 border-r border-gray-200 bg-green-50/50">
+                      {(totalHours + totalOvertime) > 0 ? (totalHours + totalOvertime) : ""}
+                    </td>
                     <td className="p-2 text-center font-bold text-blue-800 border-r border-gray-200 bg-blue-50/50">
                       {sumUW > 0 ? sumUW : ""}
                     </td>
@@ -763,23 +1148,278 @@ export default function Foreman({ user }: { user: any }) {
                   </tr>
                 );
               })}
-              {employees.length === 0 && (
+              {employees.filter(e => !e.is_supervisor).length === 0 && (
                 <tr>
-                  <td colSpan={daysInMonth.length + 10} className="p-12 text-center text-gray-500">
-                    {activeHallId ? "Brak pracowników przypisanych do tej hali." : "Wybierz halę, aby zobaczyć pracowników."}
+                  <td colSpan={daysInMonth.length + 14} className="p-8 text-center text-gray-500">
+                    {activeHallId ? "Brak pracowników produkcyjnych przypisanych do tej hali." : "Wybierz halę, aby zobaczyć pracowników."}
                   </td>
                 </tr>
               )}
+              
+              {/* Sekcja: Nadzór (Mistrzowie, Brygadziści) */}
+              {employees.filter(e => e.is_supervisor).length > 0 && (
+                <tr className="bg-indigo-100 border-t-4 border-indigo-300">
+                  <td colSpan={daysInMonth.length + 14} className="p-3 text-center">
+                    <span className="text-indigo-800 font-bold text-sm flex items-center justify-center gap-2">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                      NADZÓR ({employees.filter(e => e.is_supervisor).length})
+                      <span className="text-xs font-normal text-indigo-600 ml-2">(godziny nie wliczane do statystyk hali)</span>
+                    </span>
+                  </td>
+                </tr>
+              )}
+              {employees.filter(e => e.is_supervisor).map(emp => {
+                const empAbsences = absences.filter(a => a.employee_id === emp.id);
+                const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+                
+                // Dla Agencja/DG: nadgodziny doliczane do godzin, nie do nadgodzin
+                const totalHours = empAbsences.reduce((sum, a) => {
+                  if (a.type !== "present") return sum;
+                  const wh = a.working_hours || 0;
+                  const oh = a.overtime_hours || 0;
+                  return sum + wh + (isAgencyOrDG ? oh : 0);
+                }, 0);
+                const totalOvertime = isAgencyOrDG ? 0 : empAbsences.reduce((sum, a) => sum + (a.overtime_hours || 0), 0);
+                const sumUW = empAbsences.filter(a => a.type === "vacation").length;
+                const sumCH = empAbsences.filter(a => a.type === "sick").length;
+                const sumNZ = empAbsences.filter(a => a.type === "unplanned").length;
+                const sumOP = empAbsences.filter(a => a.type === "care").length;
+                const sumKR = empAbsences.filter(a => a.type === "blood").length;
+                const sumBL = empAbsences.filter(a => a.type === "unpaid").length;
+                
+                // Oblicz pozostały limit godzin dla Agencja/DG
+                const hoursLimit = emp.employment_type === 'Agencja' ? settings.hours_limit_agencja :
+                                   emp.employment_type === 'DG' ? settings.hours_limit_dg : null;
+                const remainingLimit = hoursLimit !== null ? hoursLimit - totalHours : null;
+                const isLimitCritical = remainingLimit !== null && remainingLimit < 20;
+
+                return (
+                  <tr 
+                    key={emp.id} 
+                    className={`group hover:bg-indigo-50 transition-colors cursor-grab active:cursor-grabbing bg-indigo-50/30 ${
+                      dragOverEmployeeId === emp.id ? 'bg-blue-100 border-t-2 border-blue-500' : ''
+                    } ${draggedEmployeeId === emp.id ? 'opacity-50' : ''}`}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, emp.id)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={(e) => handleDragOver(e, emp.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, emp.id)}
+                  >
+                    {shiftCount > 1 && (
+                      <td className="p-1 text-center min-w-[40px] w-[40px] sticky-col-shift group-hover:!bg-indigo-50">
+                        <select
+                          value={emp.shift || 1}
+                          onChange={(e) => handleChangeShift(emp.id, parseInt(e.target.value))}
+                          className={`text-xs font-bold px-1 py-0.5 rounded-full border-0 cursor-pointer ${
+                            (emp.shift || 1) === 1 ? 'bg-blue-100 text-blue-700' :
+                            (emp.shift || 1) === 2 ? 'bg-green-100 text-green-700' :
+                            'bg-orange-100 text-orange-700'
+                          }`}
+                        >
+                          {[1, 2, 3].slice(0, shiftCount).map(s => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </td>
+                    )}
+                    <td className={`p-2 text-gray-800 min-w-[60px] w-[60px] ${shiftCount > 1 ? 'sticky-col-0-shifted' : 'sticky-col-0'} group-hover:!bg-indigo-50`}>
+                      {emp.employee_number || '-'}
+                    </td>
+                    <td className={`p-2 font-medium text-indigo-800 whitespace-nowrap min-w-[180px] ${shiftCount > 1 ? 'sticky-col-1-shifted' : 'sticky-col-1'} group-hover:!bg-indigo-50`}>
+                      {emp.last_name} {emp.first_name}
+                    </td>
+                    <td className={`p-2 text-indigo-600 text-xs truncate min-w-[100px] w-[100px] ${shiftCount > 1 ? 'sticky-col-2-shifted' : 'sticky-col-2'} group-hover:!bg-indigo-50`} title={emp.position}>
+                      {emp.position}
+                    </td>
+                    <td className={`p-1 text-center min-w-[60px] w-[60px] ${shiftCount > 1 ? 'sticky-col-forma-shifted' : 'sticky-col-forma'} group-hover:!bg-indigo-50`}>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        emp.employment_type === 'Agencja' ? 'bg-orange-100 text-orange-700' :
+                        emp.employment_type === 'DG' ? 'bg-purple-100 text-purple-700' :
+                        'bg-blue-100 text-blue-700'
+                      }`}>
+                        {emp.employment_type || 'Etat'}
+                      </span>
+                    </td>
+                    <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-edit-shifted' : 'sticky-col-edit'} group-hover:!bg-indigo-50`}>
+                      <button
+                        onClick={() => setEditingEmployee(emp)}
+                        className="text-amber-600 hover:text-amber-700 hover:bg-amber-100 p-1 rounded transition-colors"
+                        title="Edytuj pracownika"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    </td>
+                    <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-3-shifted' : 'sticky-col-3'} group-hover:!bg-indigo-50`}>
+                      <button
+                        onClick={() => setTransferringEmployeeId(emp.id)}
+                        className="text-blue-600 hover:text-blue-700 hover:bg-blue-100 p-1 rounded transition-colors"
+                        title="Przenieś na inną halę"
+                      >
+                        <ArrowRightLeft className="w-4 h-4" />
+                      </button>
+                    </td>
+                    <td className={`p-1 text-center min-w-[50px] w-[50px] ${shiftCount > 1 ? 'sticky-col-4-shifted' : 'sticky-col-4'} group-hover:!bg-indigo-50`}>
+                      {confirmingDeleteId === emp.id ? (
+                        <div className="flex gap-1 justify-center">
+                          <button
+                            onClick={() => handleDeleteEmployee(emp.id)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-100 p-1 rounded transition-colors"
+                            title="Potwierdź usunięcie"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmingDeleteId(null)}
+                            className="text-gray-600 hover:text-gray-700 hover:bg-gray-100 p-1 rounded transition-colors"
+                            title="Anuluj"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmingDeleteId(emp.id)}
+                          className="text-red-500 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                          title="Usuń pracownika"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </td>
+                    {daysInMonth.map(day => {
+                      const dateStr = format(day, "yyyy-MM-dd");
+                      const val = getCellValue(emp.id, dateStr);
+                      const isWknd = isFreeDay(day);
+                      const isToday = isSameDay(day, new Date());
+                      const colorClass = getCellColor(val);
+
+                      return (
+                        <td key={dateStr} className={`p-0 border-r relative ${isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${isToday && !val ? 'bg-yellow-50' : ''}`}>
+                          <input
+                            key={val}
+                            type="text"
+                            data-row={emp.id}
+                            data-col={dateStr}
+                            defaultValue={val}
+                            onBlur={(e) => {
+                              if (e.target.value !== val) {
+                                handleCellChange(emp.id, dateStr, e.target.value);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              const currentInput = e.currentTarget;
+                              const table = currentInput.closest('table');
+                              if (!table) return;
+                              
+                              const allInputs = Array.from(table.querySelectorAll('input[data-row][data-col]')) as HTMLInputElement[];
+                              const currentIndex = allInputs.indexOf(currentInput);
+                              const numCols = daysInMonth.length;
+                              
+                              let nextInput: HTMLInputElement | null = null;
+                              
+                              if (e.key === 'Enter' || e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                if (currentInput.value !== val) {
+                                  handleCellChange(emp.id, dateStr, currentInput.value);
+                                }
+                                nextInput = allInputs[currentIndex + numCols] || null;
+                              } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                nextInput = allInputs[currentIndex - numCols] || null;
+                              } else if (e.key === 'ArrowRight') {
+                                e.preventDefault();
+                                nextInput = allInputs[currentIndex + 1] || null;
+                              } else if (e.key === 'ArrowLeft') {
+                                e.preventDefault();
+                                nextInput = allInputs[currentIndex - 1] || null;
+                              } else if (e.key === 'Tab' && !e.shiftKey) {
+                                e.preventDefault();
+                                if (currentInput.value !== val) {
+                                  handleCellChange(emp.id, dateStr, currentInput.value);
+                                }
+                                nextInput = allInputs[currentIndex + 1] || null;
+                              } else if (e.key === 'Tab' && e.shiftKey) {
+                                e.preventDefault();
+                                nextInput = allInputs[currentIndex - 1] || null;
+                              }
+                              
+                              if (nextInput) {
+                                nextInput.focus();
+                                nextInput.select();
+                              }
+                            }}
+                            className={`w-full h-full min-h-[36px] text-center text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-colors ${colorClass} ${isWknd && !val ? 'bg-red-50' : ''} ${isToday && !val ? 'bg-yellow-50' : ''}`}
+                          />
+                        </td>
+                      );
+                    })}
+                    <td className={`p-2 text-center font-bold border-r border-gray-200 ${
+                      isLimitCritical 
+                        ? 'bg-red-500 text-white animate-pulse' 
+                        : remainingLimit !== null 
+                          ? 'bg-amber-50 text-amber-800' 
+                          : 'bg-gray-50 text-gray-400'
+                    }`} title={hoursLimit !== null ? `Limit: ${hoursLimit}h, Wykorzystano: ${totalHours}h` : 'Etat - brak limitu'}>
+                      {remainingLimit !== null ? remainingLimit : '-'}
+                    </td>
+                    <td className="p-2 text-center font-bold text-blue-700 border-r border-gray-200 bg-blue-50/50">
+                      {totalHours > 0 ? totalHours : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-purple-700 border-r border-gray-200 bg-purple-50/50">
+                      {totalOvertime > 0 ? totalOvertime : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-green-800 border-r border-gray-200 bg-green-50/50">
+                      {(totalHours + totalOvertime) > 0 ? (totalHours + totalOvertime) : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-blue-800 border-r border-gray-200 bg-blue-50/50">
+                      {sumUW > 0 ? sumUW : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-red-800 border-r border-gray-200 bg-red-50/50">
+                      {sumCH > 0 ? sumCH : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-orange-800 border-r border-gray-200 bg-orange-50/50">
+                      {sumNZ > 0 ? sumNZ : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-teal-800 border-r border-gray-200 bg-teal-50/50">
+                      {sumOP > 0 ? sumOP : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-rose-800 border-r border-gray-200 bg-rose-50/50">
+                      {sumKR > 0 ? sumKR : ""}
+                    </td>
+                    <td className="p-2 text-center font-bold text-gray-800 bg-gray-100/50">
+                      {sumBL > 0 ? sumBL : ""}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
+      {/* Fixed horizontal scrollbar - always visible at bottom of screen */}
+      {showFixedScrollbar && createPortal(
+        <div className="fixed-scrollbar">
+          <div 
+            ref={scrollbarRef}
+            className="fixed-scrollbar-inner"
+          >
+            <div style={{ width: tableWidth || '100%', height: '1px' }}></div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Charts */}
       {activeHallId && employees.length > 0 && (() => {
         const chartData = daysInMonth.map(day => {
           const dateStr = format(day, "yyyy-MM-dd");
-          const dayAbsences = absences.filter(a => a.date === dateStr);
+          // Filtruj tylko pracowników produkcyjnych (bez nadzoru)
+          const productionEmpIds = new Set(employees.filter(e => !e.is_supervisor).map(e => e.id));
+          const dayAbsences = absences.filter(a => a.date === dateStr && productionEmpIds.has(a.employee_id));
           
           let present = 0;
           let vacation = 0;
@@ -791,12 +1431,13 @@ export default function Foreman({ user }: { user: any }) {
           let totalHours = 0;
           let overtime = 0;
 
-          employees.forEach(emp => {
-            const record = dayAbsences.find(a => a.employee_id === emp.id);
-            if (!record) return;
-            
+          // Iterujemy po absences zamiast employees - uwzględnia usuniętych pracowników
+          dayAbsences.forEach(record => {
             const type = record.type;
-            const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+            // Używamy employment_type z absences (zawiera dane usuniętych pracowników)
+            const emp = employees.find(e => e.id === record.employee_id);
+            const employmentType = record.employment_type || emp?.employment_type;
+            const isAgencyOrDG = employmentType === 'Agencja' || employmentType === 'DG';
             
             if (type === "present" && (record.working_hours > 0 || record.overtime_hours > 0)) {
               present++;
@@ -1079,17 +1720,6 @@ export default function Foreman({ user }: { user: any }) {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Imię</label>
-                <input
-                  type="text"
-                  required
-                  value={newEmployee.first_name}
-                  onChange={e => setNewEmployee({...newEmployee, first_name: e.target.value})}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="np. Jan"
-                />
-              </div>
-              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nazwisko</label>
                 <input
                   type="text"
@@ -1098,6 +1728,17 @@ export default function Foreman({ user }: { user: any }) {
                   onChange={e => setNewEmployee({...newEmployee, last_name: e.target.value})}
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="np. Kowalski"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Imię</label>
+                <input
+                  type="text"
+                  required
+                  value={newEmployee.first_name}
+                  onChange={e => setNewEmployee({...newEmployee, first_name: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="np. Jan"
                 />
               </div>
               <div>
@@ -1161,6 +1802,132 @@ export default function Foreman({ user }: { user: any }) {
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
                 >
                   Dodaj
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Edycji Pracownika */}
+      {editingEmployee && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-amber-50 to-orange-50">
+              <h3 className="text-xl font-bold text-gray-800">Edytuj Pracownika</h3>
+              <button 
+                onClick={() => setEditingEmployee(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <form onSubmit={handleEditEmployee} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nr pracownika</label>
+                <input
+                  type="text"
+                  value={editingEmployee.employee_number || ''}
+                  onChange={e => setEditingEmployee({...editingEmployee, employee_number: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none"
+                  placeholder="np. 001"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nazwisko</label>
+                <input
+                  type="text"
+                  required
+                  value={editingEmployee.last_name}
+                  onChange={e => setEditingEmployee({...editingEmployee, last_name: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none"
+                  placeholder="np. Kowalski"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Imię</label>
+                <input
+                  type="text"
+                  required
+                  value={editingEmployee.first_name}
+                  onChange={e => setEditingEmployee({...editingEmployee, first_name: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none"
+                  placeholder="np. Jan"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Stanowisko</label>
+                <input
+                  type="text"
+                  value={editingEmployee.position || ''}
+                  onChange={e => setEditingEmployee({...editingEmployee, position: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none"
+                  placeholder="np. Monter"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hala</label>
+                <select
+                  value={editingEmployee.hall_id}
+                  onChange={e => setEditingEmployee({...editingEmployee, hall_id: parseInt(e.target.value)})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none"
+                >
+                  {allHalls.map(h => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Forma zatrudnienia</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="edit_employment_type"
+                      value="Etat"
+                      checked={editingEmployee.employment_type === "Etat"}
+                      onChange={e => setEditingEmployee({...editingEmployee, employment_type: e.target.value})}
+                      className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">Etat</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="edit_employment_type"
+                      value="Agencja"
+                      checked={editingEmployee.employment_type === "Agencja"}
+                      onChange={e => setEditingEmployee({...editingEmployee, employment_type: e.target.value})}
+                      className="w-4 h-4 text-orange-600 focus:ring-orange-500"
+                    />
+                    <span className="text-sm text-gray-700">Agencja</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="edit_employment_type"
+                      value="DG"
+                      checked={editingEmployee.employment_type === "DG"}
+                      onChange={e => setEditingEmployee({...editingEmployee, employment_type: e.target.value})}
+                      className="w-4 h-4 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-700">DG</span>
+                  </label>
+                </div>
+              </div>
+              <div className="pt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingEmployee(null)}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2.5 bg-amber-600 text-white font-medium rounded-xl hover:bg-amber-700 transition-colors shadow-sm"
+                >
+                  Zapisz zmiany
                 </button>
               </div>
             </form>

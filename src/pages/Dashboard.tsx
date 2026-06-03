@@ -71,12 +71,16 @@ export default function Dashboard() {
     end: endOfMonth(new Date(selectedMonth))
   });
 
-  // Global Daily Data
+  // Filtruj pracowników produkcyjnych (bez nadzoru) - używane we wszystkich statystykach
+  const supervisorIds = new Set(employees.filter(e => e.is_supervisor).map(e => e.id));
+  const productionEmployees = employees.filter(e => !e.is_supervisor);
+
+  // Global Daily Data - iterujemy po absences aby uwzględnić usuniętych pracowników (bez nadzoru)
   const globalDailyData = daysInMonth.map(day => {
     const dateStr = format(day, "yyyy-MM-dd");
-    const dayAbsences = absences.filter(a => a.date === dateStr);
+    // Filtruj tylko pracowników produkcyjnych
+    const dayAbsences = absences.filter(a => a.date === dateStr && !supervisorIds.has(a.employee_id));
     
-    // We need to count all employees. If they don't have an absence record, they are present.
     let present = 0;
     let vacation = 0;
     let sick = 0;
@@ -93,16 +97,14 @@ export default function Dashboard() {
       hallCounts[`${h.name}_count`] = 0;
     });
 
-    employees.forEach(emp => {
-      const record = dayAbsences.find(a => a.employee_id === emp.id);
-      if (!record) return; // Do not count if no record exists
-      
+    // Iterujemy po absences zamiast employees - uwzględnia usuniętych pracowników
+    dayAbsences.forEach(record => {
       const type = record.type;
       const isPresent = type === "present" && (record.working_hours > 0 || record.overtime_hours > 0);
       
       if (isPresent) {
         present++;
-        const hall = halls.find(h => h.id === emp.hall_id);
+        const hall = halls.find(h => h.id === record.hall_id);
         if (hall) {
           // Rzeczywiste godziny pracy (working_hours + overtime_hours) minus 0.5h przerwy
           const totalWorked = (record.working_hours || 0) + (record.overtime_hours || 0);
@@ -133,21 +135,31 @@ export default function Dashboard() {
     };
   });
 
-  // Global Hall Stats (Frequency & Overtime per hall)
+  // Global Hall Stats (Frequency & Overtime per hall) - tylko pracownicy produkcyjni (bez nadzoru)
   const workingDaysInMonth = daysInMonth.filter(isWorkingDay).length;
 
   const globalHallStats = halls.map(hall => {
-    const hallEmployees = employees.filter(e => e.hall_id === hall.id);
-    const hallAbsences = absences.filter(a => a.hall_id === hall.id);
+    // Filtruj absences tylko dla pracowników produkcyjnych
+    const hallAbsences = absences.filter(a => a.hall_id === hall.id && !supervisorIds.has(a.employee_id));
+    
+    // Grupuj absences po employee_id aby policzyć unikalnych pracowników (w tym usuniętych)
+    const uniqueEmployeeIds = [...new Set(hallAbsences.map(a => a.employee_id))];
+    const activeEmployeesCount = productionEmployees.filter(e => e.hall_id === hall.id).length;
+    // Użyj większej liczby - aktywni lub unikalni z absences
+    const totalEmployeesCount = Math.max(activeEmployeesCount, uniqueEmployeeIds.length);
     
     // Base is total number of employee-days in working days only
-    let totalBaseDays = hallEmployees.length * workingDaysInMonth;
+    let totalBaseDays = totalEmployeesCount * workingDaysInMonth;
     let totalPresentDays = 0;
     let totalOvertime = 0;
 
-    hallEmployees.forEach(emp => {
-      const empAbsences = hallAbsences.filter(a => a.employee_id === emp.id);
-      const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+    // Iterujemy po unikalnych pracownikach z absences
+    uniqueEmployeeIds.forEach(empId => {
+      const empAbsences = hallAbsences.filter(a => a.employee_id === empId);
+      // Używamy employment_type z absences (zawiera dane usuniętych pracowników)
+      const emp = employees.find(e => e.id === empId);
+      const employmentType = empAbsences[0]?.employment_type || emp?.employment_type;
+      const isAgencyOrDG = employmentType === 'Agencja' || employmentType === 'DG';
       
       // Liczymy tylko dni robocze (pon-pt, bez świąt) do frekwencji
       let presentDays = empAbsences.filter(a => {
@@ -170,11 +182,11 @@ export default function Dashboard() {
     };
   });
 
-  // Hall Specific Data
+  // Hall Specific Data - iterujemy po absences aby uwzględnić usuniętych pracowników (bez nadzoru)
   const hallDailyData = selectedHallId !== "global" ? daysInMonth.map(day => {
     const dateStr = format(day, "yyyy-MM-dd");
-    const hallEmployees = employees.filter(e => e.hall_id === selectedHallId);
-    const dayAbsences = absences.filter(a => a.date === dateStr && a.hall_id === selectedHallId);
+    // Filtruj tylko pracowników produkcyjnych (bez nadzoru)
+    const dayAbsences = absences.filter(a => a.date === dateStr && a.hall_id === selectedHallId && !supervisorIds.has(a.employee_id));
     
     let present = 0;
     let vacation = 0;
@@ -186,12 +198,13 @@ export default function Dashboard() {
     let overtime = 0;
     let totalHours = 0;
 
-    hallEmployees.forEach(emp => {
-      const record = dayAbsences.find(a => a.employee_id === emp.id);
-      if (!record) return;
-
+    // Iterujemy po absences zamiast employees - uwzględnia usuniętych pracowników
+    dayAbsences.forEach(record => {
       const type = record.type;
-      const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+      // Używamy employment_type z absences (zawiera dane usuniętych pracowników)
+      const emp = employees.find(e => e.id === record.employee_id);
+      const employmentType = record.employment_type || emp?.employment_type;
+      const isAgencyOrDG = employmentType === 'Agencja' || employmentType === 'DG';
       
       if (type === "present" && (record.working_hours > 0 || record.overtime_hours > 0)) {
         present++;
@@ -241,16 +254,28 @@ export default function Dashboard() {
   };
   
   if (selectedHallId !== "global") {
-    const hallEmployees = employees.filter(e => e.hall_id === selectedHallId);
-    const hallAbsences = absences.filter(a => a.hall_id === selectedHallId);
+    // Filtruj tylko pracowników produkcyjnych (bez nadzoru)
+    const hallAbsences = absences.filter(a => a.hall_id === selectedHallId && !supervisorIds.has(a.employee_id));
     
-    let totalBaseDays = hallEmployees.length * workingDaysInMonth;
+    // Grupuj absences po employee_id aby uwzględnić usuniętych pracowników
+    const uniqueEmployeeIds = [...new Set(hallAbsences.map(a => a.employee_id))];
+    const activeEmployeesCount = productionEmployees.filter(e => e.hall_id === selectedHallId).length;
+    const totalEmployeesCount = Math.max(activeEmployeesCount, uniqueEmployeeIds.length);
+    
+    let totalBaseDays = totalEmployeesCount * workingDaysInMonth;
     let totalPresentDays = 0;
     let totalWorkingHours = 0;
 
-    const empStats = hallEmployees.map(emp => {
-      const empAbsences = hallAbsences.filter(a => a.employee_id === emp.id);
-      const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
+    // Iterujemy po unikalnych pracownikach z absences (w tym usuniętych)
+    const empStats = uniqueEmployeeIds.map(empId => {
+      const empAbsences = hallAbsences.filter(a => a.employee_id === empId);
+      // Używamy danych z absences lub fallback do employees
+      const emp = employees.find(e => e.id === empId);
+      const employmentType = empAbsences[0]?.employment_type || emp?.employment_type;
+      const isAgencyOrDG = employmentType === 'Agencja' || employmentType === 'DG';
+      const firstName = empAbsences[0]?.first_name || emp?.first_name || 'Usunięty';
+      const lastName = empAbsences[0]?.last_name || emp?.last_name || 'Pracownik';
+      const isDeleted = empAbsences[0]?.is_deleted || !emp;
       
       // Filtruj tylko dni robocze (pon-pt, bez świąt) do frekwencji
       let presentDays = empAbsences.filter(a => {
@@ -285,7 +310,11 @@ export default function Dashboard() {
       hallStats.totalOvertime += overtime;
       
       return {
-        ...emp,
+        id: empId,
+        first_name: firstName,
+        last_name: lastName,
+        employment_type: employmentType,
+        is_deleted: isDeleted,
         presentDays,
         overtime,
         workingHours,
@@ -379,8 +408,15 @@ export default function Dashboard() {
     const tomorrowStr = format(tomorrow, "yyyy-MM-dd");
     const tomorrowAbsenceRecords = hallAbsences.filter(a => a.date === tomorrowStr && a.type !== "present");
     hallStats.tomorrowAbsences = tomorrowAbsenceRecords.map(a => {
-      const emp = hallEmployees.find(e => e.id === a.employee_id);
-      return { ...a, employee: emp };
+      // Używamy danych z absences (zawiera dane usuniętych pracowników)
+      const emp = employees.find(e => e.id === a.employee_id);
+      return { 
+        ...a, 
+        employee: emp || { 
+          first_name: a.first_name || 'Usunięty', 
+          last_name: a.last_name || 'Pracownik' 
+        } 
+      };
     });
     
     // Frequency trend (mock - would need previous month data for real calculation)
@@ -394,6 +430,41 @@ export default function Dashboard() {
       hallStats.frequencyTrend = Math.round(((secondHalfAvg - firstHalfAvg) / (firstHalfAvg || 1)) * 100);
     }
   }
+
+  // Statystyki nadzoru (Mistrzowie, Brygadziści)
+  const supervisors = employees.filter(e => e.is_supervisor);
+  const supervisorAbsences = absences.filter(a => supervisorIds.has(a.employee_id));
+  
+  const supervisorStats = supervisors.map(sup => {
+    const supAbsences = supervisorAbsences.filter(a => a.employee_id === sup.id);
+    const presentDays = supAbsences.filter(a => {
+      const date = new Date(a.date);
+      return a.type === "present" && (a.working_hours > 0 || a.overtime_hours > 0) && isWorkingDay(date);
+    }).length;
+    const workingHours = supAbsences.reduce((sum, a) => sum + (a.working_hours || 0), 0);
+    const overtimeHours = supAbsences.reduce((sum, a) => sum + (a.overtime_hours || 0), 0);
+    const vacationDays = supAbsences.filter(a => a.type === "vacation").length;
+    const sickDays = supAbsences.filter(a => a.type === "sick").length;
+    
+    return {
+      id: sup.id,
+      first_name: sup.first_name,
+      last_name: sup.last_name,
+      position: sup.position,
+      hall_id: sup.hall_id,
+      employee_number: sup.employee_number,
+      presentDays,
+      workingHours,
+      overtimeHours,
+      totalHours: workingHours + overtimeHours,
+      vacationDays,
+      sickDays,
+      frequency: workingDaysInMonth > 0 ? Math.round((presentDays / workingDaysInMonth) * 100) : 0
+    };
+  });
+  
+  // Top 3 nadzoru po godzinach
+  const topSupervisors = [...supervisorStats].sort((a, b) => b.totalHours - a.totalHours).slice(0, 3);
 
   return (
     <div className="space-y-6">
@@ -761,7 +832,7 @@ export default function Dashboard() {
                         <div>
                           <p className="text-sm font-bold text-gray-800">
                             {emp.employee_number && <span className="text-sm font-bold text-gray-800 mr-1">{emp.employee_number}</span>}
-                            {emp.first_name} {emp.last_name}
+                            {emp.last_name} {emp.first_name}
                           </p>
                           <p className="text-[10px] text-gray-500">{emp.position}</p>
                         </div>
@@ -788,7 +859,7 @@ export default function Dashboard() {
                         <div>
                           <p className="text-sm font-bold text-gray-800">
                             {emp.employee_number && <span className="text-sm font-bold text-gray-800 mr-1">{emp.employee_number}</span>}
-                            {emp.first_name} {emp.last_name}
+                            {emp.last_name} {emp.first_name}
                           </p>
                           <p className="text-[10px] text-gray-500">{emp.position}</p>
                         </div>
@@ -814,7 +885,7 @@ export default function Dashboard() {
                         <div>
                           <p className="text-sm font-bold text-gray-800">
                             {emp.employee_number && <span className="text-sm font-bold text-gray-800 mr-1">{emp.employee_number}</span>}
-                            {emp.first_name} {emp.last_name}
+                            {emp.last_name} {emp.first_name}
                           </p>
                           <p className="text-[10px] text-gray-500">{emp.position}</p>
                         </div>
@@ -852,7 +923,7 @@ export default function Dashboard() {
                         const hall = halls.find(h => h.id === a.employee?.hall_id);
                         return (
                           <p key={i} className="text-xs text-gray-700">
-                            <span className="text-gray-400 font-mono">{a.employee?.employee_number || '-'}</span> {a.employee?.first_name} {a.employee?.last_name}
+                            <span className="text-gray-400 font-mono">{a.employee?.employee_number || '-'}</span> {a.employee?.last_name} {a.employee?.first_name}
                             {hall && <span className="text-gray-400"> ({hall.name})</span>}
                             {' - '}<span className="font-medium">{
                               a.type === 'vacation' ? 'Urlop' : 
@@ -886,7 +957,7 @@ export default function Dashboard() {
                         const hall = halls.find(h => h.id === r.employee?.hall_id);
                         return (
                           <p key={i} className="text-xs text-gray-700">
-                            <span className="text-gray-400 font-mono">{r.employee?.employee_number || '-'}</span> {r.employee.first_name} {r.employee.last_name}
+                            <span className="text-gray-400 font-mono">{r.employee?.employee_number || '-'}</span> {r.employee.last_name} {r.employee.first_name}
                             {hall && <span className="text-gray-400"> ({hall.name})</span>}
                             {' - '}<span className="font-medium">{r.count}x {r.dayName}</span>
                           </p>
@@ -913,7 +984,7 @@ export default function Dashboard() {
                         const hall = halls.find(h => h.id === w.employee?.hall_id);
                         return (
                           <p key={i} className="text-xs text-gray-700">
-                            <span className="text-gray-400 font-mono">{w.employee?.employee_number || '-'}</span> {w.employee.first_name} {w.employee.last_name}
+                            <span className="text-gray-400 font-mono">{w.employee?.employee_number || '-'}</span> {w.employee.last_name} {w.employee.first_name}
                             {hall && <span className="text-gray-400"> ({hall.name})</span>}
                             {' - '}<span className="font-medium text-blue-600">{w.used}/{w.limit} dni</span>
                           </p>
@@ -1053,6 +1124,111 @@ export default function Dashboard() {
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sekcja Nadzoru */}
+      {supervisors.length > 0 && (
+        <div className="bg-indigo-50 p-6 rounded-xl shadow-sm border border-indigo-200">
+          <div className="flex items-center gap-3 mb-4">
+            <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            <h4 className="text-base font-medium text-indigo-800">Nadzór - Statystyki ({format(new Date(selectedMonth), "MM.yyyy")})</h4>
+            <span className="text-xs text-indigo-600 bg-indigo-100 px-2 py-1 rounded-full">{supervisors.length} osób</span>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Top 3 Nadzoru */}
+            <div className="bg-white p-4 rounded-lg border border-indigo-100">
+              <h5 className="text-sm font-medium text-indigo-700 mb-3 flex items-center gap-2">
+                <span className="text-lg">🏆</span> Top 3 Nadzoru
+              </h5>
+              {topSupervisors.length > 0 ? (
+                <div className="space-y-2">
+                  {topSupervisors.map((sup, i) => {
+                    const hall = halls.find(h => h.id === sup.hall_id);
+                    return (
+                      <div key={sup.id} className="flex items-center justify-between p-2 bg-indigo-50 rounded">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-lg ${i === 0 ? 'text-yellow-500' : i === 1 ? 'text-gray-400' : 'text-amber-600'}`}>
+                            {i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'}
+                          </span>
+                          <div>
+                            <p className="text-sm font-medium text-gray-800">{sup.last_name} {sup.first_name}</p>
+                            <p className="text-xs text-gray-500">{sup.position} • {hall?.name || '-'}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm font-bold text-indigo-600">{sup.workingHours}h</span>
+                          {sup.overtimeHours > 0 && (
+                            <span className="text-xs text-purple-600 ml-1">+{sup.overtimeHours}h</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">Brak danych</p>
+              )}
+            </div>
+
+            {/* Frekwencja Nadzoru */}
+            <div className="bg-white p-4 rounded-lg border border-indigo-100">
+              <h5 className="text-sm font-medium text-indigo-700 mb-3 flex items-center gap-2">
+                <span className="text-lg">📊</span> Frekwencja Nadzoru
+              </h5>
+              <div className="space-y-2">
+                {supervisorStats.map(sup => {
+                  const hall = halls.find(h => h.id === sup.hall_id);
+                  return (
+                    <div key={sup.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{sup.last_name} {sup.first_name}</p>
+                        <p className="text-xs text-gray-500">{hall?.name || '-'}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-16 bg-gray-200 rounded-full h-2">
+                          <div 
+                            className={`h-2 rounded-full ${sup.frequency >= 80 ? 'bg-green-500' : sup.frequency >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                            style={{ width: `${Math.min(100, sup.frequency)}%` }}
+                          ></div>
+                        </div>
+                        <span className="text-sm font-bold text-gray-700">{sup.frequency}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Nieobecności Nadzoru */}
+            <div className="bg-white p-4 rounded-lg border border-indigo-100">
+              <h5 className="text-sm font-medium text-indigo-700 mb-3 flex items-center gap-2">
+                <span className="text-lg">📅</span> Nieobecności Nadzoru
+              </h5>
+              <div className="space-y-2">
+                {supervisorStats.filter(s => s.vacationDays > 0 || s.sickDays > 0).length > 0 ? (
+                  supervisorStats.filter(s => s.vacationDays > 0 || s.sickDays > 0).map(sup => (
+                    <div key={sup.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <p className="text-sm font-medium text-gray-800">{sup.last_name} {sup.first_name}</p>
+                      <div className="flex gap-2">
+                        {sup.vacationDays > 0 && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">UW: {sup.vacationDays}</span>
+                        )}
+                        {sup.sickDays > 0 && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">CH: {sup.sickDays}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-gray-500">Brak nieobecności w tym miesiącu</p>
+                )}
               </div>
             </div>
           </div>

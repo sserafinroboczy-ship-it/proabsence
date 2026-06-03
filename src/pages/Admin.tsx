@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { fetchApi } from "../lib/api";
 import * as XLSX from "xlsx";
-import { Database, RefreshCw } from "lucide-react";
+import { Database, RefreshCw, Pencil, X } from "lucide-react";
 import { format } from "date-fns";
 
 export default function Admin() {
@@ -13,6 +13,7 @@ export default function Admin() {
   const [backupLoading, setBackupLoading] = useState(false);
   const [confirmingUserId, setConfirmingUserId] = useState<number | null>(null);
   const [confirmingEmployeeId, setConfirmingEmployeeId] = useState<number | null>(null);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
   
   // Filtry pracowników
   const [employeeFilter, setEmployeeFilter] = useState({ name: "", position: "", hall_id: "", employment_type: "" });
@@ -36,8 +37,9 @@ export default function Admin() {
   const [addingEmail, setAddingEmail] = useState(false);
   
   // Forms
-  const [newUser, setNewUser] = useState({ username: "", password: "", role: "foreman", hall_id: "", employee_number: "" });
-  const [newHall, setNewHall] = useState({ name: "", is_active: true });
+  const [newUser, setNewUser] = useState({ username: "", password: "", role: "foreman", hall_id: "", employee_number: "", first_name: "", last_name: "" });
+  const [newHall, setNewHall] = useState({ name: "", is_active: true, shift_count: 2 });
+  const [editingHall, setEditingHall] = useState<any | null>(null);
   const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", hall_id: "", employee_number: "", employment_type: "Etat" });
 
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +166,7 @@ export default function Admin() {
           hall_id: newUser.hall_id ? parseInt(newUser.hall_id) : null
         })
       });
-      setNewUser({ username: "", password: "", role: "foreman", hall_id: "", employee_number: "" });
+      setNewUser({ username: "", password: "", role: "foreman", hall_id: "", employee_number: "", first_name: "", last_name: "" });
       loadData();
     } catch (err: any) {
       setError(err.message);
@@ -193,6 +195,27 @@ export default function Admin() {
     }
   };
 
+  const handleEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setError(null);
+    try {
+      await fetchApi(`/api/users/${editingUser.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          username: editingUser.username,
+          role: editingUser.role,
+          hall_id: editingUser.hall_id || null,
+          employee_number: editingUser.employee_number || null
+        })
+      });
+      setEditingUser(null);
+      loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   const handleCreateHall = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -201,7 +224,7 @@ export default function Admin() {
         method: "POST",
         body: JSON.stringify(newHall)
       });
-      setNewHall({ name: "", is_active: true });
+      setNewHall({ name: "", is_active: true, shift_count: 2 });
       loadData();
     } catch (err: any) {
       setError(err.message);
@@ -213,8 +236,24 @@ export default function Admin() {
     try {
       await fetchApi(`/api/halls/${hall.id}`, {
         method: "PUT",
-        body: JSON.stringify({ name: hall.name, is_active: !hall.is_active })
+        body: JSON.stringify({ name: hall.name, is_active: !hall.is_active, shift_count: hall.shift_count })
       });
+      loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleUpdateHall = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingHall) return;
+    setError(null);
+    try {
+      await fetchApi(`/api/halls/${editingHall.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ name: editingHall.name, is_active: editingHall.is_active, shift_count: editingHall.shift_count })
+      });
+      setEditingHall(null);
       loadData();
     } catch (err: any) {
       setError(err.message);
@@ -292,6 +331,16 @@ export default function Admin() {
               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
               required
             />
+            <select
+              value={newHall.shift_count}
+              onChange={e => setNewHall({...newHall, shift_count: parseInt(e.target.value)})}
+              className="border border-gray-300 rounded-lg px-3 py-2"
+              title="Liczba zmian"
+            >
+              <option value={1}>1 zmiana</option>
+              <option value={2}>2 zmiany</option>
+              <option value={3}>3 zmiany</option>
+            </select>
             <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
               Dodaj Halę
             </button>
@@ -299,11 +348,22 @@ export default function Admin() {
           <ul className="divide-y divide-gray-100">
             {halls.map(hall => (
               <li key={hall.id} className="py-3 flex justify-between items-center">
-                <span className="font-medium">{hall.name}</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-medium">{hall.name}</span>
+                  <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                    {hall.shift_count || 2} {(hall.shift_count || 2) === 1 ? 'zmiana' : 'zmiany'}
+                  </span>
+                </div>
                 <div className="flex items-center gap-3">
                   <span className={`px-2 py-1 rounded text-xs ${hall.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                     {hall.is_active ? "Aktywna" : "Nieaktywna"}
                   </span>
+                  <button 
+                    onClick={() => setEditingHall({...hall})}
+                    className="text-sm text-amber-600 hover:text-amber-800"
+                  >
+                    Edytuj
+                  </button>
                   <button 
                     onClick={() => handleToggleHall(hall)}
                     className="text-sm text-blue-600 hover:text-blue-800"
@@ -315,6 +375,60 @@ export default function Admin() {
             ))}
           </ul>
         </div>
+
+        {/* Modal edycji hali */}
+        {editingHall && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
+              <h3 className="text-lg font-semibold mb-4">Edytuj Halę</h3>
+              <form onSubmit={handleUpdateHall} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nazwa hali</label>
+                  <input
+                    type="text"
+                    value={editingHall.name}
+                    onChange={e => setEditingHall({...editingHall, name: e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Liczba zmian</label>
+                  <select
+                    value={editingHall.shift_count || 2}
+                    onChange={e => setEditingHall({...editingHall, shift_count: parseInt(e.target.value)})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  >
+                    <option value={1}>1 zmiana (bez rotacji)</option>
+                    <option value={2}>2 zmiany</option>
+                    <option value={3}>3 zmiany</option>
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Przy 1 zmianie kolumna "Zm" nie będzie wyświetlana w karcie obecności.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="hallActive"
+                    checked={editingHall.is_active}
+                    onChange={e => setEditingHall({...editingHall, is_active: e.target.checked})}
+                    className="rounded"
+                  />
+                  <label htmlFor="hallActive" className="text-sm">Hala aktywna</label>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button type="submit" className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                    Zapisz
+                  </button>
+                  <button type="button" onClick={() => setEditingHall(null)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300">
+                    Anuluj
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Zarządzanie Użytkownikami */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -338,14 +452,7 @@ export default function Admin() {
                 required
               />
             </div>
-            <div className="grid grid-cols-3 gap-4">
-              <input
-                type="text"
-                placeholder="Nr pracownika"
-                value={newUser.employee_number}
-                onChange={e => setNewUser({...newUser, employee_number: e.target.value})}
-                className="border border-gray-300 rounded-lg px-3 py-2"
-              />
+            <div className="grid grid-cols-2 gap-4">
               <select
                 value={newUser.role}
                 onChange={e => setNewUser({...newUser, role: e.target.value})}
@@ -362,10 +469,38 @@ export default function Admin() {
                 className="border border-gray-300 rounded-lg px-3 py-2"
                 disabled={newUser.role === "admin" || newUser.role === "guest"}
               >
-                <option value="">Wybierz halę (opcjonalnie)</option>
+                <option value="">Wybierz halę {(newUser.role === "mistrz" || newUser.role === "foreman") ? "*" : "(opcjonalnie)"}</option>
                 {halls.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
               </select>
             </div>
+            {/* Imię, nazwisko i nr pracownika dla mistrza/brygadzisty */}
+            {(newUser.role === "mistrz" || newUser.role === "foreman") && (
+              <div className="grid grid-cols-3 gap-4">
+                <input
+                  type="text"
+                  placeholder="Imię *"
+                  value={newUser.first_name}
+                  onChange={e => setNewUser({...newUser, first_name: e.target.value})}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="Nazwisko *"
+                  value={newUser.last_name}
+                  onChange={e => setNewUser({...newUser, last_name: e.target.value})}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="Nr pracownika"
+                  value={newUser.employee_number}
+                  onChange={e => setNewUser({...newUser, employee_number: e.target.value})}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                />
+              </div>
+            )}
             <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
               Dodaj Użytkownika
             </button>
@@ -387,6 +522,14 @@ export default function Admin() {
                   <p className="text-xs text-gray-500">Rola: {roleNames[u.role] || u.role} {hallName ? `| Hala: ${hallName}` : ""}</p>
                 </div>
                 <div className="flex items-center gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setEditingUser({...u})}
+                    className="text-blue-600 hover:text-blue-800 p-1"
+                    title="Edytuj użytkownika"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
                   <button 
                     type="button"
                     onClick={() => handleResetPassword(u.id)}
@@ -544,17 +687,17 @@ export default function Admin() {
             />
             <input
               type="text"
-              placeholder="Imię"
-              value={newEmployee.first_name}
-              onChange={e => setNewEmployee({...newEmployee, first_name: e.target.value})}
+              placeholder="Nazwisko"
+              value={newEmployee.last_name}
+              onChange={e => setNewEmployee({...newEmployee, last_name: e.target.value})}
               className="border border-gray-300 rounded-lg px-3 py-2"
               required
             />
             <input
               type="text"
-              placeholder="Nazwisko"
-              value={newEmployee.last_name}
-              onChange={e => setNewEmployee({...newEmployee, last_name: e.target.value})}
+              placeholder="Imię"
+              value={newEmployee.first_name}
+              onChange={e => setNewEmployee({...newEmployee, first_name: e.target.value})}
               className="border border-gray-300 rounded-lg px-3 py-2"
               required
             />
@@ -667,7 +810,7 @@ export default function Admin() {
             <thead className="sticky top-0 z-20">
               <tr className="bg-gray-50">
                 <th className="p-3 bg-gray-50">Nr</th>
-                <th className="p-3 bg-gray-50">Imię i Nazwisko</th>
+                <th className="p-3 bg-gray-50">Nazwisko i Imię</th>
                 <th className="p-3 bg-gray-50">Stanowisko</th>
                 <th className="p-3 bg-gray-50">Forma</th>
                 <th className="p-3 bg-gray-50">Hala</th>
@@ -677,7 +820,7 @@ export default function Admin() {
             <tbody className="divide-y divide-gray-100">
               {employees
                 .filter(emp => {
-                  const fullName = `${emp.first_name} ${emp.last_name}`.toLowerCase();
+                  const fullName = `${emp.last_name} ${emp.first_name}`.toLowerCase();
                   const nameMatch = !employeeFilter.name || fullName.includes(employeeFilter.name.toLowerCase());
                   const positionMatch = !employeeFilter.position || emp.position.toLowerCase().includes(employeeFilter.position.toLowerCase());
                   const hallMatch = !employeeFilter.hall_id || emp.hall_id === parseInt(employeeFilter.hall_id);
@@ -687,7 +830,7 @@ export default function Admin() {
                 .map(emp => (
                 <tr key={emp.id} className="hover:bg-gray-50">
                   <td className="p-3 text-gray-500 font-mono text-xs">{emp.employee_number || '-'}</td>
-                  <td className="p-3 font-medium">{emp.first_name} {emp.last_name}</td>
+                  <td className="p-3 font-medium">{emp.last_name} {emp.first_name}</td>
                   <td className="p-3 text-gray-600">{emp.position}</td>
                   <td className="p-3">
                     <span className={`text-xs font-semibold px-2 py-1 rounded ${
@@ -835,6 +978,86 @@ export default function Admin() {
           </div>
         )}
       </div>
+
+      {/* Modal Edycji Użytkownika */}
+      {editingUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50">
+              <h3 className="text-xl font-bold text-gray-800">Edytuj Użytkownika</h3>
+              <button 
+                onClick={() => setEditingUser(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <form onSubmit={handleEditUser} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Login</label>
+                <input
+                  type="text"
+                  required
+                  value={editingUser.username}
+                  onChange={e => setEditingUser({...editingUser, username: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rola</label>
+                <select
+                  value={editingUser.role}
+                  onChange={e => setEditingUser({...editingUser, role: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  <option value="admin">Administrator</option>
+                  <option value="mistrz">Mistrz</option>
+                  <option value="foreman">Brygadzista</option>
+                  <option value="guest">Gość</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hala (opcjonalnie)</label>
+                <select
+                  value={editingUser.hall_id || ""}
+                  onChange={e => setEditingUser({...editingUser, hall_id: e.target.value ? parseInt(e.target.value) : null})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  <option value="">-- Brak --</option>
+                  {halls.filter(h => h.is_active).map(h => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nr pracownika (opcjonalnie)</label>
+                <input
+                  type="text"
+                  value={editingUser.employee_number || ""}
+                  onChange={e => setEditingUser({...editingUser, employee_number: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="np. 001"
+                />
+              </div>
+              <div className="pt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+                >
+                  Zapisz zmiany
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

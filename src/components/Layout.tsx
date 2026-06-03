@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Users, Calendar, LogOut, ClipboardList, Info } from "lucide-react";
+import { LayoutDashboard, Users, Calendar, LogOut, ClipboardList, Info, MessageCircle } from "lucide-react";
 import { clsx } from "clsx";
 import { fetchApi } from "../lib/api";
 
@@ -35,10 +35,28 @@ export default function Layout({ user, onLogout, onShowAbout }: { user: any; onL
     };
   }, []);
 
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+
+  const fetchUnreadChatCount = async () => {
+    try {
+      const data = await fetchApi("/api/chat/unread");
+      setUnreadChatCount(data.count);
+    } catch (err) {
+      console.error("Failed to fetch unread chat count", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchUnreadChatCount();
+    const chatInterval = setInterval(fetchUnreadChatCount, 3000);
+    return () => clearInterval(chatInterval);
+  }, []);
+
   const navItems = [
     { name: "Dashboard", path: "/", icon: LayoutDashboard, hidden: user.role !== "admin" },
     { name: "Wprowadzanie Danych", path: "/foreman", icon: ClipboardList, hidden: user.role === "guest" },
     { name: "Kalendarz", path: "/calendar", icon: Calendar },
+    { name: "Czat", path: "/chat", icon: MessageCircle },
     { name: "Panel Admina", path: "/admin", icon: Users, hidden: user.role !== "admin" },
   ].filter((item) => !item.hidden);
 
@@ -73,6 +91,11 @@ export default function Layout({ user, onLogout, onShowAbout }: { user: any; onL
                 {item.path === "/calendar" && unreadNotesCount > 0 && (
                   <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
                     {unreadNotesCount}
+                  </span>
+                )}
+                {item.path === "/chat" && unreadChatCount > 0 && (
+                  <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                    {unreadChatCount}
                   </span>
                 )}
               </Link>

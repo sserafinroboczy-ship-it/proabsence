@@ -127,6 +127,13 @@ async function startServer() {
     if (!valid) return res.status(401).json({ error: "Invalid credentials" });
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, hall_id: user.hall_id }, JWT_SECRET, { expiresIn: "24h" });
+    
+    // Logowanie zalogowania
+    const roleNames: Record<string, string> = { admin: 'Administrator', mistrz: 'Mistrz', foreman: 'Brygadzista', user: 'Użytkownik' };
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      user.id, "LOGOWANIE", `${user.username} | Rola: ${roleNames[user.role] || user.role}`, getLocalTimestamp()
+    );
+    
     res.json({ token, user: { id: user.id, username: user.username, role: user.role, hall_id: user.hall_id, force_password_change: user.force_password_change } });
   });
 
@@ -162,17 +169,37 @@ async function startServer() {
 
   app.post("/api/users", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const { username, password, role, hall_id, employee_number } = req.body;
+    const { username, password, role, hall_id, employee_number, first_name, last_name } = req.body;
     try {
+      // Walidacja dla mistrza/brygadzisty
+      if ((role === 'mistrz' || role === 'foreman') && (!hall_id || !first_name || !last_name)) {
+        return res.status(400).json({ error: "Dla mistrza/brygadzisty wymagane są: hala, imię i nazwisko" });
+      }
+      
       const hash = bcrypt.hashSync(password, 10);
       const stmt = db.prepare("INSERT INTO users (username, password, role, hall_id, force_password_change, employee_number) VALUES (?, ?, ?, ?, 1, ?)");
       const info = stmt.run(username, hash, role, hall_id || null, employee_number || null);
       
+      const roleNames: Record<string, string> = { admin: 'Administrator', mistrz: 'Mistrz', foreman: 'Brygadzista', user: 'Użytkownik' };
+      const hall = hall_id ? db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any : null;
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, "UTWORZONO_UZYTKOWNIKA", `Utworzono użytkownika ${username}`, getLocalTimestamp()
+        req.user.id, "DODANO_UZYTKOWNIKA", `${username} | Rola: ${roleNames[role] || role}${hall ? ` | Hala: ${hall.name}` : ''}${employee_number ? ` | Nr prac.: ${employee_number}` : ''}`, getLocalTimestamp()
       );
       
-      res.json({ id: info.lastInsertRowid, username, role, hall_id, employee_number });
+      // Automatycznie utwórz pracownika dla mistrza/brygadzisty
+      let employeeId = null;
+      if ((role === 'mistrz' || role === 'foreman') && hall_id && first_name && last_name) {
+        const position = role === 'mistrz' ? 'Mistrz' : 'Brygadzista';
+        const empStmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position, employee_number, employment_type, is_supervisor) VALUES (?, ?, ?, ?, ?, 'Etat', 1)");
+        const empInfo = empStmt.run(first_name, last_name, hall_id, position, employee_number || null);
+        employeeId = empInfo.lastInsertRowid;
+        
+        db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+          req.user.id, "DODANO_PRACOWNIKA_NADZOR", `${first_name} ${last_name} | ${position} | Hala: ${hall?.name}`, getLocalTimestamp()
+        );
+      }
+      
+      res.json({ id: info.lastInsertRowid, username, role, hall_id, employee_number, employeeId });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -198,12 +225,50 @@ async function startServer() {
     }
   });
 
+  app.put("/api/users/:id", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    try {
+      const { username, role, hall_id, employee_number } = req.body;
+      
+      // Pobierz aktualne dane użytkownika
+      const existing = db.prepare("SELECT u.*, h.name as hall_name FROM users u LEFT JOIN halls h ON u.hall_id = h.id WHERE u.id = ?").get(req.params.id) as any;
+      if (!existing) return res.status(404).json({ error: "Użytkownik nie znaleziony" });
+      
+      // Aktualizuj użytkownika
+      db.prepare("UPDATE users SET username = ?, role = ?, hall_id = ?, employee_number = ? WHERE id = ?")
+        .run(username, role, hall_id || null, employee_number || null, req.params.id);
+      
+      // Szczegółowe logowanie zmian
+      const roleNames: Record<string, string> = { admin: 'Administrator', mistrz: 'Mistrz', foreman: 'Brygadzista', guest: 'Gość' };
+      const changes: string[] = [];
+      if (existing.username !== username) changes.push(`Login: "${existing.username}" → "${username}"`);
+      if (existing.role !== role) changes.push(`Rola: "${roleNames[existing.role] || existing.role}" → "${roleNames[role] || role}"`);
+      if (existing.hall_id !== hall_id) {
+        const newHall = hall_id ? db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any : null;
+        changes.push(`Hala: "${existing.hall_name || '-'}" → "${newHall?.name || '-'}"`);
+      }
+      if (existing.employee_number !== employee_number) changes.push(`Nr prac.: "${existing.employee_number || '-'}" → "${employee_number || '-'}"`);
+      
+      if (changes.length > 0) {
+        db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+          req.user.id, "EDYCJA_UZYTKOWNIKA", `${existing.username} | ${changes.join(' | ')}`, getLocalTimestamp()
+        );
+      }
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.delete("/api/users/:id", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
     try {
       // Pobierz dane użytkownika przed usunięciem
-      const userToDelete = db.prepare("SELECT username FROM users WHERE id = ?").get(req.params.id) as any;
-      const deletedUsername = userToDelete?.username || `ID:${req.params.id}`;
+      const userToDelete = db.prepare("SELECT u.*, h.name as hall_name FROM users u LEFT JOIN halls h ON u.hall_id = h.id WHERE u.id = ?").get(req.params.id) as any;
+      if (!userToDelete) return res.status(404).json({ error: "Użytkownik nie znaleziony" });
+      
+      const roleNames: Record<string, string> = { admin: 'Administrator', mistrz: 'Mistrz', foreman: 'Brygadzista', user: 'Użytkownik' };
       
       // Clean up related records that might have FK constraints
       db.prepare("DELETE FROM note_reads WHERE user_id = ?").run(req.params.id);
@@ -215,7 +280,7 @@ async function startServer() {
 
       db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, "USUNIETO_UZYTKOWNIKA", `Usunięto użytkownika: ${deletedUsername}`, getLocalTimestamp()
+        req.user.id, "USUNIETO_UZYTKOWNIKA", `${userToDelete.username} | Rola: ${roleNames[userToDelete.role] || userToDelete.role}${userToDelete.hall_name ? ` | Hala: ${userToDelete.hall_name}` : ''}`, getLocalTimestamp()
       );
       res.json({ success: true });
     } catch (err: any) {
@@ -232,23 +297,28 @@ async function startServer() {
 
   app.post("/api/halls", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const { name, is_active } = req.body;
-    const stmt = db.prepare("INSERT INTO halls (name, is_active) VALUES (?, ?)");
-    const info = stmt.run(name, is_active ? 1 : 0);
+    const { name, is_active, shift_count } = req.body;
+    const stmt = db.prepare("INSERT INTO halls (name, is_active, shift_count) VALUES (?, ?, ?)");
+    const info = stmt.run(name, is_active ? 1 : 0, shift_count || 2);
     
     db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-      req.user.id, "UTWORZONO_HALE", `Utworzono halę ${name}`, getLocalTimestamp()
+      req.user.id, "UTWORZONO_HALE", `Utworzono halę ${name} (${shift_count || 2} zmiany)`, getLocalTimestamp()
     );
-    res.json({ id: info.lastInsertRowid, name, is_active });
+    res.json({ id: info.lastInsertRowid, name, is_active, shift_count: shift_count || 2 });
   });
 
   app.put("/api/halls/:id", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const { name, is_active } = req.body;
-    db.prepare("UPDATE halls SET name = ?, is_active = ? WHERE id = ?").run(name, is_active ? 1 : 0, req.params.id);
+    const { name, is_active, shift_count } = req.body;
+    db.prepare("UPDATE halls SET name = ?, is_active = ?, shift_count = ? WHERE id = ?").run(name, is_active ? 1 : 0, shift_count || 2, req.params.id);
+    
+    // Reset employees with shift > shift_count to shift 1
+    if (shift_count) {
+      db.prepare("UPDATE employees SET shift = 1 WHERE hall_id = ? AND shift > ?").run(req.params.id, shift_count);
+    }
     
     db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-      req.user.id, "AKTUALIZACJA_HALI", `Zaktualizowano halę ID ${req.params.id}`, getLocalTimestamp()
+      req.user.id, "AKTUALIZACJA_HALI", `Zaktualizowano halę ID ${req.params.id} (${shift_count || 2} zmiany)`, getLocalTimestamp()
     );
     res.json({ success: true });
   });
@@ -256,11 +326,16 @@ async function startServer() {
   // Employees CRUD
   app.get("/api/employees", authenticate, (req: any, res) => {
     const hallId = req.query.hall_id;
+    const includeDeleted = req.query.include_deleted === 'true';
     let employees;
+    
+    // Domyślnie nie pokazuj usuniętych pracowników (is_deleted = 0 lub NULL)
+    const deletedFilter = includeDeleted ? '' : 'AND (is_deleted = 0 OR is_deleted IS NULL)';
+    
     if (hallId) {
-      employees = db.prepare("SELECT * FROM employees WHERE hall_id = ?").all(hallId);
+      employees = db.prepare(`SELECT * FROM employees WHERE hall_id = ? ${deletedFilter} ORDER BY sort_order ASC, id ASC`).all(hallId);
     } else {
-      employees = db.prepare("SELECT * FROM employees").all();
+      employees = db.prepare(`SELECT * FROM employees WHERE 1=1 ${deletedFilter} ORDER BY hall_id ASC, sort_order ASC, id ASC`).all();
     }
     res.json(employees);
   });
@@ -272,18 +347,18 @@ async function startServer() {
     
     const { first_name, last_name, hall_id, position, employee_number, employment_type } = req.body;
     
-    // Foreman can only add to their own hall
-    if (isForeman && req.user.hall_id) {
-      if (parseInt(hall_id) !== parseInt(req.user.hall_id)) {
-        return res.status(403).json({ error: "Możesz dodawać pracowników tylko do swojej hali." });
-      }
-    }
-
-    const stmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position, employee_number, employment_type) VALUES (?, ?, ?, ?, ?, ?)");
-    const info = stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat');
+    // Mistrzowie i brygadziści mogą dodawać pracowników do wszystkich hal (zastępstwa)
     
+    // Automatycznie ustaw is_supervisor na podstawie stanowiska
+    const positionLower = (position || '').toLowerCase();
+    const isSupervisor = positionLower.includes('mistrz') || positionLower.includes('brygadzista') ? 1 : 0;
+
+    const stmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position, employee_number, employment_type, is_supervisor) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    const info = stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', isSupervisor);
+    
+    const hall = db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any;
     db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-      req.user.id, "UTWORZONO_PRACOWNIKA", `Dodano pracownika ${first_name} ${last_name} (Hala ID: ${hall_id})`, getLocalTimestamp()
+      req.user.id, "DODANO_PRACOWNIKA", `${first_name} ${last_name} | Nr: ${employee_number || '-'} | Stanowisko: ${position || '-'} | Hala: ${hall?.name || '-'} | Forma: ${employment_type || 'Etat'}`, getLocalTimestamp()
     );
     res.json({ id: info.lastInsertRowid });
   });
@@ -294,32 +369,40 @@ async function startServer() {
     
     const { first_name, last_name, hall_id, position, employee_number, employment_type } = req.body;
     
-    // Pobierz aktualną halę pracownika
-    const existing = db.prepare("SELECT hall_id, first_name, last_name FROM employees WHERE id = ?").get(req.params.id) as any;
-    const oldHallId = existing?.hall_id;
+    // Pobierz aktualne dane pracownika
+    const existing = db.prepare("SELECT * FROM employees WHERE id = ?").get(req.params.id) as any;
+    if (!existing) return res.status(404).json({ error: "Pracownik nie znaleziony" });
+    
+    const oldHallId = existing.hall_id;
     const isTransfer = oldHallId !== parseInt(hall_id);
     
-    // Foreman check - może edytować tylko pracowników ze swojej hali
-    // ALE może ich przenosić na inne hale
-    if (isForeman && req.user.hall_id) {
-      if (existing.hall_id !== req.user.hall_id) {
-        return res.status(403).json({ error: "Możesz edytować tylko pracowników ze swojej hali." });
-      }
-    }
-
-    const stmt = db.prepare("UPDATE employees SET first_name = ?, last_name = ?, hall_id = ?, position = ?, employee_number = ?, employment_type = ? WHERE id = ?");
-    stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', req.params.id);
+    // Mistrzowie i brygadziści mogą edytować pracowników ze wszystkich hal (zastępstwa)
     
-    // Logowanie - różne dla przeniesienia i zwykłej edycji
+    // Automatycznie ustaw is_supervisor na podstawie stanowiska
+    const positionLower = (position || '').toLowerCase();
+    const isSupervisor = positionLower.includes('mistrz') || positionLower.includes('brygadzista') ? 1 : 0;
+
+    const stmt = db.prepare("UPDATE employees SET first_name = ?, last_name = ?, hall_id = ?, position = ?, employee_number = ?, employment_type = ?, is_supervisor = ? WHERE id = ?");
+    stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', isSupervisor, req.params.id);
+    
+    // Szczegółowe logowanie zmian
+    const changes: string[] = [];
+    if (existing.first_name !== first_name) changes.push(`Imię: "${existing.first_name}" → "${first_name}"`);
+    if (existing.last_name !== last_name) changes.push(`Nazwisko: "${existing.last_name}" → "${last_name}"`);
+    if (existing.position !== position) changes.push(`Stanowisko: "${existing.position || '-'}" → "${position || '-'}"`);
+    if (existing.employee_number !== employee_number) changes.push(`Nr: "${existing.employee_number || '-'}" → "${employee_number || '-'}"`);
+    if (existing.employment_type !== (employment_type || 'Etat')) changes.push(`Forma: "${existing.employment_type || 'Etat'}" → "${employment_type || 'Etat'}"`);
+    
     if (isTransfer) {
       const oldHall = db.prepare("SELECT name FROM halls WHERE id = ?").get(oldHallId) as any;
       const newHall = db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any;
+      changes.push(`Hala: "${oldHall?.name}" → "${newHall?.name}"`);
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, "PRZENIESIENIE_PRACOWNIKA", `Przeniesiono: ${existing.first_name} ${existing.last_name} | Z hali: ${oldHall?.name} | Na halę: ${newHall?.name}`, getLocalTimestamp()
+        req.user.id, "PRZENIESIENIE_PRACOWNIKA", `${existing.first_name} ${existing.last_name} | ${changes.join(' | ')}`, getLocalTimestamp()
       );
-    } else {
+    } else if (changes.length > 0) {
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, "AKTUALIZACJA_PRACOWNIKA", `Zaktualizowano pracownika ID ${req.params.id}`, getLocalTimestamp()
+        req.user.id, "EDYCJA_PRACOWNIKA", `${existing.first_name} ${existing.last_name} | ${changes.join(' | ')}`, getLocalTimestamp()
       );
     }
     res.json({ success: true });
@@ -330,22 +413,19 @@ async function startServer() {
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
     try {
-      // Foreman check
-      if (isForeman && req.user.hall_id) {
-        const existing = db.prepare("SELECT hall_id FROM employees WHERE id = ?").get(req.params.id) as any;
-        if (!existing || existing.hall_id !== req.user.hall_id) {
-          return res.status(403).json({ error: "Możesz usuwać tylko pracowników ze swojej hali." });
-        }
-      }
-
-      // Delete related absences first to satisfy FK constraints
-      db.prepare("DELETE FROM absences WHERE employee_id = ?").run(req.params.id);
-
-      const stmt = db.prepare("DELETE FROM employees WHERE id = ?");
-      stmt.run(req.params.id);
+      // Pobierz dane pracownika przed usunięciem
+      const employee = db.prepare("SELECT e.*, h.name as hall_name FROM employees e LEFT JOIN halls h ON e.hall_id = h.id WHERE e.id = ?").get(req.params.id) as any;
+      if (!employee) return res.status(404).json({ error: "Pracownik nie znaleziony" });
+      
+      // Soft delete - oznacz jako usunięty zamiast trwale usuwać
+      // Dane historyczne (absences, godziny) zostają zachowane
+      db.prepare("UPDATE employees SET is_deleted = 1, deleted_at = ? WHERE id = ?").run(
+        getLocalTimestamp(),
+        req.params.id
+      );
       
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, "USUNIETO_PRACOWNIKA", `Usunięto pracownika ID ${req.params.id}`, getLocalTimestamp()
+        req.user.id, "USUNIETO_PRACOWNIKA", `${employee.first_name} ${employee.last_name} | Nr: ${employee.employee_number || '-'} | Stanowisko: ${employee.position || '-'} | Hala: ${employee.hall_name} | Forma: ${employee.employment_type || 'Etat'} | Dane historyczne zachowane`, getLocalTimestamp()
       );
       res.json({ success: true });
     } catch (err: any) {
@@ -354,13 +434,113 @@ async function startServer() {
     }
   });
 
-  // Absences
+  // Reorder employees (drag & drop)
+  app.post("/api/employees/reorder", authenticate, (req: any, res) => {
+    try {
+      const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
+      if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
+      
+      const { hall_id, order } = req.body;
+      if (!hall_id || !Array.isArray(order)) {
+        return res.status(400).json({ error: "Brak hall_id lub order" });
+      }
+      
+      // Zaktualizuj sort_order dla każdego pracownika
+      const updateStmt = db.prepare("UPDATE employees SET sort_order = ? WHERE id = ? AND hall_id = ?");
+      order.forEach((empId: number, index: number) => {
+        updateStmt.run(index, empId, hall_id);
+      });
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Reorder employees error:", err);
+      res.status(400).json({ error: "Błąd zmiany kolejności: " + err.message });
+    }
+  });
+
+  // Update employee shift
+  app.put("/api/employees/:id/shift", authenticate, (req: any, res) => {
+    try {
+      const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
+      if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
+      
+      const { shift } = req.body;
+      if (![1, 2, 3].includes(shift)) return res.status(400).json({ error: "Nieprawidłowa zmiana" });
+      
+      const employee = db.prepare("SELECT e.*, h.name as hall_name FROM employees e LEFT JOIN halls h ON e.hall_id = h.id WHERE e.id = ?").get(req.params.id) as any;
+      if (!employee) return res.status(404).json({ error: "Pracownik nie znaleziony" });
+      
+      const oldShift = employee.shift || 1;
+      db.prepare("UPDATE employees SET shift = ? WHERE id = ?").run(shift, req.params.id);
+      
+      if (oldShift !== shift) {
+        db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+          req.user.id, "ZMIANA_ZMIANY", `${employee.first_name} ${employee.last_name} | Zmiana: ${oldShift} → ${shift} | Hala: ${employee.hall_name}`, getLocalTimestamp()
+        );
+      }
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Update shift error:", err);
+      res.status(500).json({ error: err.message || "Błąd zmiany zmiany" });
+    }
+  });
+
+  // Rotate shifts for all employees in a hall
+  app.post("/api/halls/:id/rotate-shifts", authenticate, (req: any, res) => {
+    try {
+      const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
+      if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
+      
+      const hall = db.prepare("SELECT * FROM halls WHERE id = ?").get(req.params.id) as any;
+      if (!hall) return res.status(404).json({ error: "Hala nie znaleziona" });
+      
+      const shiftCount = hall.shift_count || 2;
+      
+      // Rotate: shift 1 -> 2 -> 3 -> 1 (or 1 -> 2 -> 1 for 2 shifts)
+      // Tylko aktywni pracownicy (nie usunięci)
+      db.prepare(`
+        UPDATE employees 
+        SET shift = CASE 
+          WHEN COALESCE(shift, 1) >= ? THEN 1 
+          ELSE COALESCE(shift, 1) + 1 
+        END 
+        WHERE hall_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
+      `).run(shiftCount, req.params.id);
+      
+      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+        req.user.id, "ROTACJA_ZMIAN", `Rotacja zmian na hali: ${hall.name}`, getLocalTimestamp()
+      );
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Rotate shifts error:", err);
+      res.status(500).json({ error: err.message || "Błąd rotacji zmian" });
+    }
+  });
+
+  // Update hall shift count
+  app.put("/api/halls/:id/shift-count", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    
+    const { shift_count } = req.body;
+    if (![2, 3].includes(shift_count)) return res.status(400).json({ error: "Liczba zmian musi być 2 lub 3" });
+    
+    db.prepare("UPDATE halls SET shift_count = ? WHERE id = ?").run(shift_count, req.params.id);
+    
+    // Reset employees with shift > shift_count to shift 1
+    db.prepare("UPDATE employees SET shift = 1 WHERE hall_id = ? AND shift > ?").run(req.params.id, shift_count);
+    
+    res.json({ success: true });
+  });
+
+  // Absences - zawiera też dane usuniętych pracowników dla zachowania historii
   app.get("/api/absences", authenticate, (req: any, res) => {
     const { start_date, end_date, hall_id } = req.query;
     let query = `
-      SELECT a.*, e.first_name, e.last_name, e.hall_id 
+      SELECT a.*, e.first_name, e.last_name, e.hall_id, e.is_deleted, e.employment_type 
       FROM absences a
-      JOIN employees e ON a.employee_id = e.id
+      LEFT JOIN employees e ON a.employee_id = e.id
       WHERE a.date >= ? AND a.date <= ?
     `;
     const params: any[] = [start_date, end_date];
@@ -379,13 +559,7 @@ async function startServer() {
     const { employee_id, date, type, overtime_hours, working_hours } = req.body;
     const wh = working_hours !== undefined ? working_hours : 8;
     
-    // Check if foreman is allowed for this employee's hall
-    if (req.user.role === "foreman" || req.user.role === "mistrz") {
-      const emp = db.prepare("SELECT hall_id FROM employees WHERE id = ?").get(employee_id) as any;
-      if (req.user.hall_id && emp.hall_id !== req.user.hall_id) {
-        return res.status(403).json({ error: "Forbidden: Not your hall" });
-      }
-    }
+    // Mistrzowie i brygadziści mogą edytować obecności we wszystkich halach (zastępstwa)
 
     const existing = db.prepare("SELECT id FROM absences WHERE employee_id = ? AND date = ?").get(employee_id, date) as any;
     
@@ -395,11 +569,31 @@ async function startServer() {
       db.prepare("INSERT INTO absences (employee_id, date, type, overtime_hours, working_hours) VALUES (?, ?, ?, ?, ?)").run(employee_id, date, type, overtime_hours, wh);
     }
     
-    const empDetails = db.prepare("SELECT first_name, last_name FROM employees WHERE id = ?").get(employee_id) as any;
+    const empDetails = db.prepare("SELECT e.first_name, e.last_name, h.name as hall_name FROM employees e LEFT JOIN halls h ON e.hall_id = h.id WHERE e.id = ?").get(employee_id) as any;
     const empName = empDetails ? `${empDetails.first_name} ${empDetails.last_name}` : `ID ${employee_id}`;
+    
+    // Mapowanie typów na polskie nazwy
+    const typeNames: Record<string, string> = {
+      'present': 'Obecny',
+      'absent': 'Nieobecny',
+      'vacation': 'Urlop wypoczynkowy',
+      'sick': 'Chorobowe',
+      'unplanned': 'Nieplanowane',
+      'care': 'Opieka',
+      'blood': 'Krew',
+      'unpaid': 'Bezpłatny'
+    };
+    const typeName = typeNames[type] || type;
+    
+    let details = `${empName} | Data: ${date} | Status: ${typeName}`;
+    if (type === 'present' && (wh || overtime_hours)) {
+      details += ` | Godz: ${wh || 0}h`;
+      if (overtime_hours) details += ` + ${overtime_hours}h nadg.`;
+    }
+    if (empDetails?.hall_name) details += ` | Hala: ${empDetails.hall_name}`;
 
     db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-      req.user.id, "AKTUALIZACJA_ABSENCJI", `Zaktualizowano absencję pracownika ${empName} w dniu ${date}`, getLocalTimestamp()
+      req.user.id, "ZMIANA_OBECNOSCI", details, getLocalTimestamp()
     );
     res.json({ success: true });
   });
@@ -716,6 +910,384 @@ async function startServer() {
     }
   });
 
+  // ==================== CHAT API ====================
+
+  // Get global messages
+  app.get("/api/chat/global", authenticate, (req: any, res) => {
+    try {
+      const messages = db.prepare(`
+        SELECT cm.id, cm.content, cm.created_at, cm.sender_id, cm.reply_to,
+               u.username as sender_username, u.role as sender_role,
+               rm.content as reply_content, ru.username as reply_username
+        FROM chat_messages cm
+        JOIN users u ON cm.sender_id = u.id
+        LEFT JOIN chat_messages rm ON cm.reply_to = rm.id
+        LEFT JOIN users ru ON rm.sender_id = ru.id
+        WHERE cm.recipient_id IS NULL
+        ORDER BY cm.created_at DESC
+        LIMIT 100
+      `).all();
+      res.json(messages.reverse());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Send global message
+  app.post("/api/chat/global", authenticate, (req: any, res) => {
+    const { content, replyTo } = req.body;
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: "Treść wiadomości jest wymagana" });
+    }
+    try {
+      const result = db.prepare(
+        "INSERT INTO chat_messages (sender_id, recipient_id, content, reply_to) VALUES (?, NULL, ?, ?)"
+      ).run(req.user.id, content.trim(), replyTo || null);
+      
+      const message = db.prepare(`
+        SELECT cm.id, cm.content, cm.created_at, cm.sender_id, cm.reply_to,
+               u.username as sender_username, u.role as sender_role,
+               rm.content as reply_content, ru.username as reply_username
+        FROM chat_messages cm
+        JOIN users u ON cm.sender_id = u.id
+        LEFT JOIN chat_messages rm ON cm.reply_to = rm.id
+        LEFT JOIN users ru ON rm.sender_id = ru.id
+        WHERE cm.id = ?
+      `).get(result.lastInsertRowid);
+      
+      // Reset typing status
+      db.prepare(`UPDATE user_status SET is_typing = 0 WHERE user_id = ?`).run(req.user.id);
+      
+      res.json(message);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get list of users for private chat
+  app.get("/api/chat/users", authenticate, (req: any, res) => {
+    try {
+      const users = db.prepare(`
+        SELECT id, username, role FROM users WHERE id != ?
+      `).all(req.user.id);
+      
+      // Get unread count for each user
+      const usersWithUnread = users.map((user: any) => {
+        const unread = db.prepare(`
+          SELECT COUNT(*) as count FROM chat_messages 
+          WHERE sender_id = ? AND recipient_id = ? AND is_read = 0
+        `).get(user.id, req.user.id) as any;
+        return { ...user, unread_count: unread.count };
+      });
+      
+      res.json(usersWithUnread);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get private messages with specific user
+  app.get("/api/chat/private/:userId", authenticate, (req: any, res) => {
+    const otherUserId = parseInt(req.params.userId);
+    try {
+      const messages = db.prepare(`
+        SELECT cm.id, cm.content, cm.created_at, cm.sender_id, cm.recipient_id, cm.is_read, cm.reply_to,
+               u.username as sender_username, u.role as sender_role,
+               rm.content as reply_content, ru.username as reply_username
+        FROM chat_messages cm
+        JOIN users u ON cm.sender_id = u.id
+        LEFT JOIN chat_messages rm ON cm.reply_to = rm.id
+        LEFT JOIN users ru ON rm.sender_id = ru.id
+        WHERE (cm.sender_id = ? AND cm.recipient_id = ?)
+           OR (cm.sender_id = ? AND cm.recipient_id = ?)
+        ORDER BY cm.created_at DESC
+        LIMIT 100
+      `).all(req.user.id, otherUserId, otherUserId, req.user.id);
+      
+      // Mark messages as read
+      db.prepare(`
+        UPDATE chat_messages SET is_read = 1 
+        WHERE sender_id = ? AND recipient_id = ? AND is_read = 0
+      `).run(otherUserId, req.user.id);
+      
+      res.json(messages.reverse());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Send private message
+  app.post("/api/chat/private/:userId", authenticate, (req: any, res) => {
+    const recipientId = parseInt(req.params.userId);
+    const { content } = req.body;
+    
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: "Treść wiadomości jest wymagana" });
+    }
+    
+    try {
+      const { replyTo } = req.body;
+      const result = db.prepare(
+        "INSERT INTO chat_messages (sender_id, recipient_id, content, reply_to) VALUES (?, ?, ?, ?)"
+      ).run(req.user.id, recipientId, content.trim(), replyTo || null);
+      
+      const message = db.prepare(`
+        SELECT cm.id, cm.content, cm.created_at, cm.sender_id, cm.recipient_id, cm.reply_to,
+               u.username as sender_username, u.role as sender_role,
+               rm.content as reply_content, ru.username as reply_username
+        FROM chat_messages cm
+        JOIN users u ON cm.sender_id = u.id
+        LEFT JOIN chat_messages rm ON cm.reply_to = rm.id
+        LEFT JOIN users ru ON rm.sender_id = ru.id
+        WHERE cm.id = ?
+      `).get(result.lastInsertRowid);
+      
+      // Reset typing status
+      db.prepare(`UPDATE user_status SET is_typing = 0 WHERE user_id = ?`).run(req.user.id);
+      
+      res.json(message);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get total unread messages count
+  app.get("/api/chat/unread", authenticate, (req: any, res) => {
+    try {
+      const result = db.prepare(`
+        SELECT COUNT(*) as count FROM chat_messages 
+        WHERE recipient_id = ? AND is_read = 0
+      `).get(req.user.id) as any;
+      res.json({ count: result.count });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete all global messages (admin only)
+  app.delete("/api/chat/global", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ error: "Tylko administrator może usuwać wiadomości" });
+    }
+    try {
+      db.prepare("DELETE FROM chat_messages WHERE recipient_id IS NULL").run();
+      res.json({ success: true, message: "Usunięto wszystkie wiadomości globalne" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete private conversation with specific user (admin only)
+  app.delete("/api/chat/private/:userId", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ error: "Tylko administrator może usuwać konwersacje" });
+    }
+    const otherUserId = parseInt(req.params.userId);
+    try {
+      db.prepare(`
+        DELETE FROM chat_messages 
+        WHERE (sender_id = ? AND recipient_id = ?)
+           OR (sender_id = ? AND recipient_id = ?)
+      `).run(req.user.id, otherUserId, otherUserId, req.user.id);
+      res.json({ success: true, message: "Usunięto konwersację" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete single message (admin only)
+  app.delete("/api/chat/message/:messageId", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ error: "Tylko administrator może usuwać wiadomości" });
+    }
+    const messageId = parseInt(req.params.messageId);
+    try {
+      db.prepare("DELETE FROM chat_messages WHERE id = ?").run(messageId);
+      res.json({ success: true, message: "Usunięto wiadomość" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update user online status (heartbeat)
+  app.post("/api/chat/heartbeat", authenticate, (req: any, res) => {
+    try {
+      db.prepare(`
+        INSERT INTO user_status (user_id, last_seen) VALUES (?, datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET last_seen = datetime('now')
+      `).run(req.user.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get online users (active in last 2 minutes)
+  app.get("/api/chat/online", authenticate, (req: any, res) => {
+    try {
+      const onlineUsers = db.prepare(`
+        SELECT user_id FROM user_status 
+        WHERE last_seen > datetime('now', '-2 minutes')
+      `).all();
+      res.json(onlineUsers.map((u: any) => u.user_id));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Set typing status
+  app.post("/api/chat/typing", authenticate, (req: any, res) => {
+    const { isTyping, typingTo } = req.body;
+    try {
+      db.prepare(`
+        INSERT INTO user_status (user_id, last_seen, is_typing, typing_to) 
+        VALUES (?, datetime('now'), ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET is_typing = ?, typing_to = ?, last_seen = datetime('now')
+      `).run(req.user.id, isTyping ? 1 : 0, typingTo || null, isTyping ? 1 : 0, typingTo || null);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get who is typing to me
+  app.get("/api/chat/typing", authenticate, (req: any, res) => {
+    try {
+      const typing = db.prepare(`
+        SELECT us.user_id, u.username FROM user_status us
+        JOIN users u ON us.user_id = u.id
+        WHERE us.is_typing = 1 AND (us.typing_to = ? OR us.typing_to IS NULL)
+        AND us.last_seen > datetime('now', '-10 seconds')
+      `).all(req.user.id);
+      res.json(typing);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Search messages
+  app.get("/api/chat/search", authenticate, (req: any, res) => {
+    const { q, recipientId } = req.query;
+    if (!q) return res.json([]);
+    try {
+      let messages;
+      if (recipientId) {
+        messages = db.prepare(`
+          SELECT cm.*, u.username as sender_username, u.role as sender_role
+          FROM chat_messages cm
+          JOIN users u ON cm.sender_id = u.id
+          WHERE cm.content LIKE ? 
+          AND ((cm.sender_id = ? AND cm.recipient_id = ?) OR (cm.sender_id = ? AND cm.recipient_id = ?))
+          ORDER BY cm.created_at DESC LIMIT 50
+        `).all(`%${q}%`, req.user.id, recipientId, recipientId, req.user.id);
+      } else {
+        messages = db.prepare(`
+          SELECT cm.*, u.username as sender_username, u.role as sender_role
+          FROM chat_messages cm
+          JOIN users u ON cm.sender_id = u.id
+          WHERE cm.content LIKE ? AND cm.recipient_id IS NULL
+          ORDER BY cm.created_at DESC LIMIT 50
+        `).all(`%${q}%`);
+      }
+      res.json(messages);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Add reaction to message (one reaction per user per message)
+  app.post("/api/chat/reaction/:messageId", authenticate, (req: any, res) => {
+    const messageId = parseInt(req.params.messageId);
+    const { emoji } = req.body;
+    if (!emoji) return res.status(400).json({ error: "Emoji wymagane" });
+    
+    try {
+      // Usuń poprzednią reakcję użytkownika na tę wiadomość
+      db.prepare(`DELETE FROM chat_reactions WHERE message_id = ? AND user_id = ?`).run(messageId, req.user.id);
+      // Dodaj nową reakcję
+      db.prepare(`INSERT INTO chat_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)`).run(messageId, req.user.id, emoji);
+      res.json({ success: true, messageId, emoji });
+    } catch (err: any) {
+      console.error("Error adding reaction:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Remove reaction from message
+  app.delete("/api/chat/reaction/:messageId", authenticate, (req: any, res) => {
+    const messageId = parseInt(req.params.messageId);
+    const { emoji } = req.body;
+    
+    try {
+      db.prepare(`
+        DELETE FROM chat_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?
+      `).run(messageId, req.user.id, emoji);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get reactions for messages
+  app.get("/api/chat/reactions/:messageIds", authenticate, (req: any, res) => {
+    const messageIds = req.params.messageIds.split(',').map(Number);
+    console.log("Getting reactions for messages:", messageIds);
+    try {
+      const reactions = db.prepare(`
+        SELECT cr.message_id, cr.emoji, cr.user_id, u.username
+        FROM chat_reactions cr
+        JOIN users u ON cr.user_id = u.id
+        WHERE cr.message_id IN (${messageIds.map(() => '?').join(',')})
+      `).all(...messageIds);
+      console.log("Found reactions:", reactions);
+      res.json(reactions);
+    } catch (err: any) {
+      console.error("Error getting reactions:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Upload file for chat
+  app.post("/api/chat/upload", authenticate, (req: any, res) => {
+    // Simple base64 file upload
+    const { fileName, fileData, fileType } = req.body;
+    if (!fileName || !fileData) {
+      return res.status(400).json({ error: "Brak pliku" });
+    }
+    
+    try {
+      const uploadsDir = path.join(process.cwd(), "data", "uploads");
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+      
+      const uniqueName = `${Date.now()}-${fileName}`;
+      const filePath = path.join(uploadsDir, uniqueName);
+      const buffer = Buffer.from(fileData, 'base64');
+      fs.writeFileSync(filePath, buffer);
+      
+      res.json({ 
+        success: true, 
+        fileUrl: `/api/chat/file/${uniqueName}`,
+        fileName,
+        fileType
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Serve uploaded files
+  app.get("/api/chat/file/:filename", (req, res) => {
+    const filePath = path.join(process.cwd(), "data", "uploads", req.params.filename);
+    if (fs.existsSync(filePath)) {
+      res.sendFile(filePath);
+    } else {
+      res.status(404).json({ error: "Plik nie znaleziony" });
+    }
+  });
+
+  // ==================== END CHAT API ====================
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -732,7 +1304,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(Number(PORT), "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     // Uruchom automatyczny backup
     startBackupScheduler();

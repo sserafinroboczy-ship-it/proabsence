@@ -221,6 +221,156 @@ try {
   // Table might already exist
 }
 
+// Migration: Add chat_messages table
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id INTEGER NOT NULL,
+      recipient_id INTEGER, -- NULL = global message, otherwise private
+      content TEXT NOT NULL,
+      file_url TEXT,
+      file_name TEXT,
+      file_type TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      is_read INTEGER DEFAULT 0,
+      FOREIGN KEY (sender_id) REFERENCES users(id),
+      FOREIGN KEY (recipient_id) REFERENCES users(id)
+    )
+  `);
+} catch (e) {
+  // Table might already exist
+}
+
+// Migration: Add file columns to chat_messages if not exist
+try {
+  db.exec(`ALTER TABLE chat_messages ADD COLUMN file_url TEXT`);
+} catch (e) {}
+try {
+  db.exec(`ALTER TABLE chat_messages ADD COLUMN file_name TEXT`);
+} catch (e) {}
+try {
+  db.exec(`ALTER TABLE chat_messages ADD COLUMN file_type TEXT`);
+} catch (e) {}
+
+// Migration: Add chat_reactions table
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_reactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      emoji TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(message_id, user_id, emoji),
+      FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+} catch (e) {}
+
+// Migration: Add user_status table for online/offline tracking
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_status (
+      user_id INTEGER PRIMARY KEY,
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      is_typing INTEGER DEFAULT 0,
+      typing_to INTEGER,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+} catch (e) {}
+
+// Migration: Add typing columns to user_status
+try {
+  db.exec(`ALTER TABLE user_status ADD COLUMN is_typing INTEGER DEFAULT 0`);
+} catch (e) {}
+try {
+  db.exec(`ALTER TABLE user_status ADD COLUMN typing_to INTEGER`);
+} catch (e) {}
+
+// Migration: Add reply_to column to chat_messages for quoting
+try {
+  db.exec(`ALTER TABLE chat_messages ADD COLUMN reply_to INTEGER REFERENCES chat_messages(id)`);
+} catch (e) {}
+
+// Migration: Add shift column to employees (1, 2, or 3)
+try {
+  db.exec(`ALTER TABLE employees ADD COLUMN shift INTEGER DEFAULT 1`);
+} catch (e) {}
+
+// Migration: Add shift_count to halls (number of shifts: 2 or 3)
+try {
+  db.exec(`ALTER TABLE halls ADD COLUMN shift_count INTEGER DEFAULT 2`);
+} catch (e) {}
+
+// Migration: Add shift_rotation_week to settings (which week of rotation we're on)
+try {
+  db.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('shift_rotation_base_date', '2026-01-05')`);
+} catch (e) {}
+
+// Migration: Add soft delete columns to employees
+try {
+  db.exec(`ALTER TABLE employees ADD COLUMN is_deleted INTEGER DEFAULT 0`);
+} catch (e) {}
+
+try {
+  db.exec(`ALTER TABLE employees ADD COLUMN deleted_at TEXT`);
+} catch (e) {}
+
+// Migration: Add sort_order column to employees for custom ordering
+try {
+  db.exec(`ALTER TABLE employees ADD COLUMN sort_order INTEGER DEFAULT 0`);
+} catch (e) {}
+
+// Migration: Add is_supervisor column to employees (for supervisors like Mistrz, Brygadzista)
+try {
+  db.exec(`ALTER TABLE employees ADD COLUMN is_supervisor INTEGER DEFAULT 0`);
+} catch (e) {}
+
+// Migration: Set is_supervisor based on position (one-time migration)
+try {
+  const supervisorFlag = db.prepare("SELECT value FROM settings WHERE key = 'supervisors_set'").get() as any;
+  if (!supervisorFlag) {
+    // Mark employees with 'Mistrz' or 'Brygadzista' in position as supervisors
+    db.prepare(`
+      UPDATE employees 
+      SET is_supervisor = 1 
+      WHERE LOWER(position) LIKE '%mistrz%' 
+         OR LOWER(position) LIKE '%brygadzista%'
+    `).run();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('supervisors_set', '1')").run();
+    console.log('[Migration] Supervisors marked based on position');
+  }
+} catch (e) {
+  console.error('[Migration] Error setting supervisors:', e);
+}
+
+// Migration: Swap first_name and last_name (one-time migration)
+// This changes display order from "Imię Nazwisko" to "Nazwisko Imię"
+try {
+  const swapFlag = db.prepare("SELECT value FROM settings WHERE key = 'names_swapped'").get() as any;
+  if (!swapFlag) {
+    // Check if there are any employees to swap
+    const empCount = db.prepare("SELECT COUNT(*) as count FROM employees").get() as any;
+    if (empCount.count > 0) {
+      // Swap first_name <-> last_name for all employees
+      db.prepare(`
+        UPDATE employees 
+        SET first_name = last_name, 
+            last_name = first_name
+      `).run();
+      console.log(`[Migration] Swapped first_name and last_name for ${empCount.count} employees`);
+    }
+    // Set flag to prevent re-running
+    db.prepare("INSERT INTO settings (key, value) VALUES ('names_swapped', '1')").run();
+    console.log('[Migration] names_swapped flag set');
+  }
+} catch (e) {
+  console.error('[Migration] Error swapping names:', e);
+}
+
 // Seed some sample data if empty
 const hallsCount = db.prepare("SELECT COUNT(*) as count FROM halls").get() as any;
 if (hallsCount.count === 0) {
@@ -228,11 +378,12 @@ if (hallsCount.count === 0) {
   const h1 = insertHall.run("Hala 1", 1).lastInsertRowid;
   const h2 = insertHall.run("Hala 2", 1).lastInsertRowid;
   
+  // Seed data: first_name = nazwisko, last_name = imię (zgodnie z nową kolejnością wyświetlania)
   const insertEmp = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position) VALUES (?, ?, ?, ?)");
-  insertEmp.run("Jan", "Kowalski", h1, "Ślusarz");
-  insertEmp.run("Anna", "Nowak", h1, "Spawacz");
-  insertEmp.run("Piotr", "Wiśniewski", h2, "Brygadzista");
-  insertEmp.run("Katarzyna", "Wójcik", h2, "Operator CNC");
+  insertEmp.run("Kowalski", "Jan", h1, "Ślusarz");
+  insertEmp.run("Nowak", "Anna", h1, "Spawacz");
+  insertEmp.run("Wiśniewski", "Piotr", h2, "Brygadzista");
+  insertEmp.run("Wójcik", "Katarzyna", h2, "Operator CNC");
 }
 
 export default db;
