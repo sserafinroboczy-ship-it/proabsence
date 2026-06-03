@@ -1,29 +1,17 @@
-# ProAbsence v1.0.3
+# ProAbsence v1.0.5
 # System zarządzania obecnością pracowników
 # Autor: Sebastian Serafin
 
 version: '3.8'
 
 services:
-  # Frontend - Nginx
-  frontend:
-    image: sserafinroboczy/proabsence-frontend:1.0.3
-    container_name: proabsence-frontend
+  # ProAbsence - Full Stack App
+  proabsence:
+    image: sserafinroboczy/proabsence:1.0.5
+    container_name: proabsence
     restart: unless-stopped
     ports:
-      - "${PORT:-80}:80"
-    depends_on:
-      - backend
-    networks:
-      - proabsence-network
-
-  # Backend - Express API
-  backend:
-    image: sserafinroboczy/proabsence-backend:1.0.3
-    container_name: proabsence-backend
-    restart: unless-stopped
-    expose:
-      - "3000"
+      - "${PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - JWT_SECRET=${JWT_SECRET}
@@ -37,18 +25,12 @@ services:
     volumes:
       - proabsence_data:/app/data
       - ./backups:/app/backups
-    networks:
-      - proabsence-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-
-networks:
-  proabsence-network:
-    driver: bridge
 
 volumes:
   proabsence_data:
