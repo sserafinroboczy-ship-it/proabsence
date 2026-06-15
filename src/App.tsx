@@ -57,7 +57,7 @@ export default function App() {
               <Route path="/foreman" element={<Foreman user={user} />} />
               <Route path="/calendar" element={<CalendarView user={user} />} />
               <Route path="/chat" element={<Chat user={user} />} />
-              {user.role === "admin" && <Route path="/admin" element={<Admin />} />}
+              {user.role === "admin" && <Route path="/admin" element={<Admin user={user} />} />}
               <Route path="*" element={<Navigate to={user.role === "admin" ? "/" : "/foreman"} />} />
             </Route>
           ) : (

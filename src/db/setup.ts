@@ -324,6 +324,74 @@ try {
   db.exec(`ALTER TABLE employees ADD COLUMN sort_order INTEGER DEFAULT 0`);
 } catch (e) {}
 
+// Migration: Add qualifications to employees (Monter/Spawacz/Czyścik)
+try {
+  db.exec(`ALTER TABLE employees ADD COLUMN qualifications TEXT DEFAULT ''`);
+} catch (e) {}
+
+// Migration: Create qualifications table (managed by admin)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS qualifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+  )`);
+} catch (e) {}
+
+// Seed: default qualifications if table is empty
+try {
+  const qCount = db.prepare("SELECT COUNT(*) as count FROM qualifications").get() as any;
+  if (qCount.count === 0) {
+    ["Monter", "Spawacz", "Czyścik"].forEach(name => {
+      db.prepare("INSERT OR IGNORE INTO qualifications (name) VALUES (?)").run(name);
+    });
+  }
+} catch (e) {}
+
+// Migration: Add hours_mode column to qualifications (standard | deduction)
+try { db.exec(`ALTER TABLE qualifications ADD COLUMN hours_mode TEXT DEFAULT 'standard'`); } catch (e) {}
+
+// Migration: Add is_global and user_id columns to notification_emails
+try { db.exec(`ALTER TABLE notification_emails ADD COLUMN is_global INTEGER DEFAULT 0`); } catch (e) {}
+try { db.exec(`ALTER TABLE notification_emails ADD COLUMN user_id INTEGER DEFAULT NULL`); } catch (e) {}
+
+// Migration: Create user_halls table (admin hall access control)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS user_halls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    hall_id INTEGER NOT NULL,
+    UNIQUE(user_id, hall_id)
+  )`);
+} catch (e) {}
+
+// Migration: Populate user_halls for existing foreman/mistrz from their hall_id (one-time)
+try {
+  const flag = db.prepare("SELECT value FROM settings WHERE key = 'foreman_halls_seeded'").get() as any;
+  if (!flag) {
+    const supervisors = db.prepare("SELECT id, hall_id FROM users WHERE role IN ('foreman', 'mistrz') AND hall_id IS NOT NULL").all() as any[];
+    supervisors.forEach((u: any) => {
+      db.prepare("INSERT OR IGNORE INTO user_halls (user_id, hall_id) VALUES (?, ?)").run(u.id, u.hall_id);
+    });
+    db.prepare("INSERT INTO settings (key, value) VALUES ('foreman_halls_seeded', '1')").run();
+    console.log(`[Migration] Seeded user_halls for ${supervisors.length} foreman/mistrz`);
+  }
+} catch (e) {
+  console.error('[Migration] Error seeding foreman user_halls:', e);
+}
+
+// Migration: Create day_comments table (short-hour explanations by supervisors)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS day_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    comment TEXT NOT NULL,
+    author_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(employee_id, date)
+  )`);
+} catch (e) {}
+
 // Migration: Add is_supervisor column to employees (for supervisors like Mistrz, Brygadzista)
 try {
   db.exec(`ALTER TABLE employees ADD COLUMN is_supervisor INTEGER DEFAULT 0`);

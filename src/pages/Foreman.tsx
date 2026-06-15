@@ -94,7 +94,7 @@ export default function Foreman({ user }: { user: any }) {
   const [error, setError] = useState<string | null>(null);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<number | null>(null);
-  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat" });
+  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat", qualifications: "" });
   const [transferringEmployeeId, setTransferringEmployeeId] = useState<number | null>(null);
   const [editingEmployee, setEditingEmployee] = useState<any | null>(null);
   const [allHalls, setAllHalls] = useState<any[]>([]);
@@ -111,16 +111,23 @@ export default function Foreman({ user }: { user: any }) {
   const [activeHall, setActiveHall] = useState<any>(null);
   const [draggedEmployeeId, setDraggedEmployeeId] = useState<number | null>(null);
   const [dragOverEmployeeId, setDragOverEmployeeId] = useState<number | null>(null);
+  const [qualificationsList, setQualificationsList] = useState<any[]>([]);
+  const [dayComments, setDayComments] = useState<Record<string, string>>({}); // key: "empId_date"
+  const [commentModal, setCommentModal] = useState<{ empId: number; date: string; empName: string; hours: number } | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [savingComment, setSavingComment] = useState(false);
+
+  useEffect(() => {
+    fetchApi("/api/qualifications").then(setQualificationsList).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetchApi("/api/halls").then(data => {
       // Zapisz wszystkie aktywne hale (do przenoszenia pracowników)
       setAllHalls(data.filter((h: any) => h.is_active));
       
-      // Mistrzowie i brygadziści widzą wszystkie hale (mogą zastępować innych)
-      const availableHalls = (user.role === "admin" || user.role === "mistrz" || user.role === "foreman")
-        ? data.filter((h: any) => h.is_active)
-        : data.filter((h: any) => h.id === user.hall_id && h.is_active);
+      // API zwraca już przefiltrowane hale (user_halls) — pokazujemy wszystkie aktywne z odpowiedzi
+      const availableHalls = data.filter((h: any) => h.is_active);
 
       setHalls(availableHalls);
       if (availableHalls.length > 0) {
@@ -144,6 +151,17 @@ export default function Foreman({ user }: { user: any }) {
       const end = format(endOfMonth(new Date(selectedMonth)), "yyyy-MM-dd");
       const data = await fetchApi(`/api/absences?start_date=${start}&end_date=${end}&hall_id=${activeHallId}`);
       setAbsences(data);
+    }
+  };
+
+  const loadDayComments = async () => {
+    if (activeHallId) {
+      try {
+        const data = await fetchApi(`/api/day-comments?hall_id=${activeHallId}&month=${selectedMonth}`);
+        const map: Record<string, string> = {};
+        data.forEach((c: any) => { map[`${c.employee_id}_${c.date}`] = c.comment; });
+        setDayComments(map);
+      } catch {}
     }
   };
 
@@ -178,7 +196,12 @@ export default function Foreman({ user }: { user: any }) {
     } else {
       setEmployees([]);
       setAbsences([]);
+      setDayComments({});
     }
+  }, [activeHallId, selectedMonth]);
+
+  useEffect(() => {
+    loadDayComments();
   }, [activeHallId, selectedMonth]);
 
   // Synchronizacja scrollowania między tabelą a sticky scrollbar
@@ -396,7 +419,7 @@ export default function Foreman({ user }: { user: any }) {
         body: JSON.stringify({ ...newEmployee, hall_id: activeHallId })
       });
       setIsAddingEmployee(false);
-      setNewEmployee({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat" });
+      setNewEmployee({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat", qualifications: "" });
       fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
     } catch (err: any) {
       setError(err.message || "Błąd dodawania pracownika");
@@ -426,7 +449,8 @@ export default function Foreman({ user }: { user: any }) {
           position: editingEmployee.position,
           employee_number: editingEmployee.employee_number,
           employment_type: editingEmployee.employment_type,
-          hall_id: editingEmployee.hall_id
+          hall_id: editingEmployee.hall_id,
+          qualifications: editingEmployee.qualifications || ''
         })
       });
       setEditingEmployee(null);
@@ -885,6 +909,7 @@ export default function Foreman({ user }: { user: any }) {
                 )}
                 <th className={`p-2 font-semibold min-w-[60px] w-[60px] ${shiftCount > 1 ? 'sticky-col-0-header-shifted' : 'sticky-col-0-header'}`}>Nr</th>
                 <th className={`p-2 font-semibold whitespace-nowrap min-w-[180px] ${shiftCount > 1 ? 'sticky-col-1-header-shifted' : 'sticky-col-1-header'}`}>Pracownik</th>
+                <th className="p-2 font-semibold min-w-[80px] w-[80px] bg-gray-100 text-gray-600" title="Kwalifikacje">Kwalif.</th>
                 <th className={`p-2 font-semibold min-w-[100px] w-[100px] ${shiftCount > 1 ? 'sticky-col-2-header-shifted' : 'sticky-col-2-header'}`}>Stanowisko</th>
                 <th className={`p-2 font-semibold min-w-[60px] w-[60px] text-center ${shiftCount > 1 ? 'sticky-col-forma-header-shifted' : 'sticky-col-forma-header'}`} title="Forma zatrudnienia">Forma</th>
                 <th className={`p-2 font-semibold text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-edit-header-shifted' : 'sticky-col-edit-header'}`} title="Edytuj pracownika">✏️</th>
@@ -980,6 +1005,13 @@ export default function Foreman({ user }: { user: any }) {
                     <td className={`p-2 font-medium text-gray-800 whitespace-nowrap min-w-[180px] ${shiftCount > 1 ? 'sticky-col-1-shifted' : 'sticky-col-1'} group-hover:!bg-gray-50`}>
                       {emp.last_name} {emp.first_name}
                     </td>
+                    <td className="p-1 min-w-[80px] w-[80px] group-hover:!bg-gray-50" title={emp.qualifications || ''}>
+                      <div className="flex flex-wrap gap-0.5">
+                        {(emp.qualifications || '').split(',').map(s => s.trim()).filter(Boolean).map(q => (
+                          <span key={q} className="text-[9px] font-semibold px-1 py-0.5 rounded bg-teal-50 text-teal-700">{q}</span>
+                        ))}
+                      </div>
+                    </td>
                     <td className={`p-2 text-gray-500 text-xs truncate min-w-[100px] w-[100px] ${shiftCount > 1 ? 'sticky-col-2-shifted' : 'sticky-col-2'} group-hover:!bg-gray-50`} title={emp.position}>
                       {emp.position}
                     </td>
@@ -1047,9 +1079,19 @@ export default function Foreman({ user }: { user: any }) {
                       const isWknd = isFreeDay(day);
                       const isToday = isSameDay(day, new Date());
                       const colorClass = getCellColor(val);
+                      const commentKey = `${emp.id}_${dateStr}`;
+                      const hasComment = !!dayComments[commentKey];
+
+                      // Podświetl gdy: Etat, dzień roboczy, wpisano liczbę < 8
+                      const numVal = parseFloat(val);
+                      const isShortHours = !isWknd && emp.employment_type === 'Etat' && val && !isNaN(numVal) && numVal > 0 && numVal < 8;
 
                       return (
-                        <td key={dateStr} className={`p-0 border-r relative ${isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${isToday && !val ? 'bg-yellow-50' : ''}`}>
+                        <td
+                          key={dateStr}
+                          className={`p-0 border-r relative ${isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${isToday && !val ? 'bg-yellow-50' : ''} ${isShortHours && hasComment ? 'cell-short-hours-commented' : ''} ${isShortHours && !hasComment ? 'cell-short-hours' : ''}`}
+                          title={isShortHours && hasComment ? `Komentarz: ${dayComments[commentKey]}` : isShortHours ? 'Kliknij prawym przyciskiem aby dodać komentarz' : undefined}
+                        >
                           <input
                             key={val}
                             type="text"
@@ -1074,7 +1116,6 @@ export default function Foreman({ user }: { user: any }) {
                               
                               if (e.key === 'Enter' || e.key === 'ArrowDown') {
                                 e.preventDefault();
-                                // Zapisz wartość i przejdź w dół
                                 if (currentInput.value !== val) {
                                   handleCellChange(emp.id, dateStr, currentInput.value);
                                 }
@@ -1106,6 +1147,19 @@ export default function Foreman({ user }: { user: any }) {
                             }}
                             className={`w-full h-full min-h-[36px] text-center text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-colors ${colorClass} ${isWknd && !val ? 'bg-red-50' : ''} ${isToday && !val ? 'bg-yellow-50' : ''}`}
                           />
+                          {isShortHours && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCommentModal({ empId: emp.id, date: dateStr, empName: `${emp.last_name} ${emp.first_name}`, hours: numVal });
+                                setCommentText(dayComments[commentKey] || "");
+                              }}
+                              className={`absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold leading-none transition-colors ${hasComment ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-red-400 text-white hover:bg-red-600'}`}
+                              title={hasComment ? "Edytuj komentarz" : "Dodaj komentarz"}
+                            >
+                              {hasComment ? '✓' : '!'}
+                            </button>
+                          )}
                         </td>
                       );
                     })}
@@ -1231,6 +1285,13 @@ export default function Foreman({ user }: { user: any }) {
                     <td className={`p-2 font-medium text-indigo-800 whitespace-nowrap min-w-[180px] ${shiftCount > 1 ? 'sticky-col-1-shifted' : 'sticky-col-1'} group-hover:!bg-indigo-50`}>
                       {emp.last_name} {emp.first_name}
                     </td>
+                    <td className="p-1 min-w-[80px] w-[80px] group-hover:!bg-indigo-50" title={emp.qualifications || ''}>
+                      <div className="flex flex-wrap gap-0.5">
+                        {(emp.qualifications || '').split(',').map(s => s.trim()).filter(Boolean).map(q => (
+                          <span key={q} className="text-[9px] font-semibold px-1 py-0.5 rounded bg-teal-50 text-teal-700">{q}</span>
+                        ))}
+                      </div>
+                    </td>
                     <td className={`p-2 text-indigo-600 text-xs truncate min-w-[100px] w-[100px] ${shiftCount > 1 ? 'sticky-col-2-shifted' : 'sticky-col-2'} group-hover:!bg-indigo-50`} title={emp.position}>
                       {emp.position}
                     </td>
@@ -1295,9 +1356,19 @@ export default function Foreman({ user }: { user: any }) {
                       const isWknd = isFreeDay(day);
                       const isToday = isSameDay(day, new Date());
                       const colorClass = getCellColor(val);
+                      const commentKey = `${emp.id}_${dateStr}`;
+                      const hasComment = !!dayComments[commentKey];
+
+                      // Podświetl gdy: Etat, dzień roboczy, wpisano liczbę < 8
+                      const numVal = parseFloat(val);
+                      const isShortHours = !isWknd && emp.employment_type === 'Etat' && val && !isNaN(numVal) && numVal > 0 && numVal < 8;
 
                       return (
-                        <td key={dateStr} className={`p-0 border-r relative ${isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${isToday && !val ? 'bg-yellow-50' : ''}`}>
+                        <td
+                          key={dateStr}
+                          className={`p-0 border-r relative ${isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${isToday && !val ? 'bg-yellow-50' : ''} ${isShortHours && hasComment ? 'cell-short-hours-commented' : ''} ${isShortHours && !hasComment ? 'cell-short-hours' : ''}`}
+                          title={isShortHours && hasComment ? `Komentarz: ${dayComments[commentKey]}` : isShortHours ? 'Kliknij aby dodać komentarz' : undefined}
+                        >
                           <input
                             key={val}
                             type="text"
@@ -1353,6 +1424,19 @@ export default function Foreman({ user }: { user: any }) {
                             }}
                             className={`w-full h-full min-h-[36px] text-center text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-colors ${colorClass} ${isWknd && !val ? 'bg-red-50' : ''} ${isToday && !val ? 'bg-yellow-50' : ''}`}
                           />
+                          {isShortHours && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCommentModal({ empId: emp.id, date: dateStr, empName: `${emp.last_name} ${emp.first_name}`, hours: numVal });
+                                setCommentText(dayComments[commentKey] || "");
+                              }}
+                              className={`absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold leading-none transition-colors ${hasComment ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-red-400 text-white hover:bg-red-600'}`}
+                              title={hasComment ? "Edytuj komentarz" : "Dodaj komentarz"}
+                            >
+                              {hasComment ? '✓' : '!'}
+                            </button>
+                          )}
                         </td>
                       );
                     })}
@@ -1476,6 +1560,27 @@ export default function Foreman({ user }: { user: any }) {
         ), 1);
         // Wysokość: minimum 250px, maksimum 450px, skalowana do danych
         const chartHeight = Math.max(250, Math.min(450, maxValue * 50 + 150));
+
+        // Statystyki kwalifikacji dla aktywnej hali — dynamiczne ze wszystkich pracowników
+        const hallProductionEmps = employees.filter(e => !e.is_supervisor);
+        const hallMonthAbsences = absences;
+        const allHallQuals = new Set<string>();
+        hallProductionEmps.forEach((e: any) => {
+          (e.qualifications || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((q: string) => allHallQuals.add(q));
+        });
+        const hallQualStats = Array.from(allHallQuals).sort().map(q => {
+          const qConfig = qualificationsList.find((c: any) => c.name === q);
+          const isDeduction = qConfig?.hours_mode === 'deduction';
+          const empsWithQ = hallProductionEmps.filter((e: any) =>
+            (e.qualifications || '').split(',').map((s: string) => s.trim()).includes(q)
+          );
+          const empIds = new Set(empsWithQ.map((e: any) => e.id));
+          const qAbsences = hallMonthAbsences.filter((a: any) => empIds.has(a.employee_id));
+          const rawHours = qAbsences.reduce((sum: number, a: any) => sum + (a.working_hours || 0) + (a.overtime_hours || 0), 0);
+          const presentDays = qAbsences.filter((a: any) => a.type === 'present' && ((a.working_hours || 0) > 0 || (a.overtime_hours || 0) > 0)).length;
+          const totalHours = isDeduction ? Math.max(0, rawHours - presentDays * 0.5) : rawHours;
+          return { label: q, count: empsWithQ.length, totalHours, isDeduction };
+        }).filter(q => q.count > 0);
 
         return (
           <div className="space-y-6 mt-6">
@@ -1690,10 +1795,146 @@ export default function Foreman({ user }: { user: any }) {
                 </ResponsiveContainer>
               </div>
             </div>
+
+            {/* Statystyki kwalifikacji */}
+            {hallQualStats.length > 0 && (
+              <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-teal-500 inline-block"></span>
+                  Statystyki Kwalifikacji — {format(new Date(selectedMonth), "MMMM yyyy", { locale: pl })}
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {hallQualStats.map((q, i) => {
+                    const colors = [
+                      { bg: "bg-teal-50", border: "border-teal-100", badge: "bg-teal-100 text-teal-700", num: "text-teal-700", icon: "text-teal-400" },
+                      { bg: "bg-blue-50", border: "border-blue-100", badge: "bg-blue-100 text-blue-700", num: "text-blue-700", icon: "text-blue-400" },
+                      { bg: "bg-violet-50", border: "border-violet-100", badge: "bg-violet-100 text-violet-700", num: "text-violet-700", icon: "text-violet-400" },
+                    ];
+                    const c = colors[i % colors.length];
+                    return (
+                      <div key={q.label} className={`${c.bg} p-5 rounded-xl border ${c.border}`}>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-xs font-bold px-2 py-1 rounded-full ${c.badge}`}>{q.label}</span>
+                            {q.isDeduction && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-semibold">-0.5h/dzień</span>}
+                          </div>
+                          <svg className={`w-5 h-5 ${c.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                        </div>
+                        <div className="flex items-end justify-between">
+                          <div>
+                            <p className="text-xs text-gray-500 mb-0.5">Pracownicy</p>
+                            <p className={`text-3xl font-bold ${c.num}`}>{q.count}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-gray-500 mb-0.5">Przepracowane</p>
+                            <p className={`text-2xl font-bold ${c.num}`}>{q.totalHours}h</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 pt-3 border-t border-white/60">
+                          <p className="text-xs text-gray-500">
+                            Śr. na osobę: <span className="font-semibold text-gray-700">{q.count > 0 ? Math.round(q.totalHours / q.count) : 0}h</span>
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );
       })()}
+
+      {/* Modal komentarza do krótkiego dnia */}
+      {commentModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-amber-50">
+              <div>
+                <h3 className="text-base font-bold text-gray-800">Komentarz do dnia</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {commentModal.empName} &bull; {commentModal.date} &bull; <span className="text-red-600 font-semibold">{commentModal.hours}h</span>
+                </p>
+              </div>
+              <button onClick={() => setCommentModal(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Powód skróconego czasu pracy
+                </label>
+                <textarea
+                  value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                  rows={4}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none resize-none"
+                  placeholder="np. Wizyta lekarska, wyjście służbowe, awaria maszyny..."
+                  autoFocus
+                />
+              </div>
+              {dayComments[`${commentModal.empId}_${commentModal.date}`] && (
+                <div className="text-xs text-gray-400 italic">
+                  Obecny komentarz zostanie zastąpiony
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t border-gray-100 flex gap-3 justify-between">
+              {dayComments[`${commentModal.empId}_${commentModal.date}`] && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await fetchApi("/api/day-comments", {
+                      method: "DELETE",
+                      body: JSON.stringify({ employee_id: commentModal.empId, date: commentModal.date })
+                    });
+                    await loadDayComments();
+                    setCommentModal(null);
+                  }}
+                  className="px-4 py-2 text-sm text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-lg transition-colors"
+                >
+                  Usuń komentarz
+                </button>
+              )}
+              <div className="flex gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setCommentModal(null)}
+                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg transition-colors"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="button"
+                  disabled={savingComment || !commentText.trim()}
+                  onClick={async () => {
+                    if (!commentText.trim()) return;
+                    setSavingComment(true);
+                    try {
+                      await fetchApi("/api/day-comments", {
+                        method: "POST",
+                        body: JSON.stringify({ employee_id: commentModal.empId, date: commentModal.date, comment: commentText.trim() })
+                      });
+                      await loadDayComments();
+                      setCommentModal(null);
+                    } catch (err: any) {
+                      setError(err.message || "Błąd zapisu komentarza");
+                    }
+                    setSavingComment(false);
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {savingComment ? "Zapisuję..." : "Zapisz"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Dodawania Pracownika */}
       {isAddingEmployee && (
@@ -1750,6 +1991,26 @@ export default function Foreman({ user }: { user: any }) {
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="np. Monter"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Kwalifikacje</label>
+                <div className="flex gap-4">
+                  {qualificationsList.map(q => (
+                    <label key={q.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(newEmployee.qualifications || "").split(",").map(s => s.trim()).filter(Boolean).includes(q.name)}
+                        onChange={e => {
+                          const current = (newEmployee.qualifications || "").split(",").map(s => s.trim()).filter(Boolean);
+                          const updated = e.target.checked ? [...current, q.name] : current.filter(x => x !== q.name);
+                          setNewEmployee({...newEmployee, qualifications: updated.join(", ")});
+                        }}
+                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-sm text-gray-700">{q.name}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Forma zatrudnienia</label>
@@ -1864,6 +2125,26 @@ export default function Foreman({ user }: { user: any }) {
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none"
                   placeholder="np. Monter"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Kwalifikacje</label>
+                <div className="flex gap-4">
+                  {qualificationsList.map(q => (
+                    <label key={q.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(editingEmployee.qualifications || "").split(",").map(s => s.trim()).filter(Boolean).includes(q.name)}
+                        onChange={e => {
+                          const current = (editingEmployee.qualifications || "").split(",").map(s => s.trim()).filter(Boolean);
+                          const updated = e.target.checked ? [...current, q.name] : current.filter(x => x !== q.name);
+                          setEditingEmployee({...editingEmployee, qualifications: updated.join(", ")});
+                        }}
+                        className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
+                      />
+                      <span className="text-sm text-gray-700">{q.name}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Hala</label>

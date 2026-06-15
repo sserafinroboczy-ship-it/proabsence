@@ -275,3 +275,23 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 .hide-native-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Podświetlenie komórek z niepełnymi godzinami pracy (Etat < 8h w dzień roboczy) */
+@keyframes pulse-red-bg {
+  0%, 100% { background-color: #fca5a5; box-shadow: inset 0 0 0 2px #ef4444; }
+  50% { background-color: #f87171; box-shadow: inset 0 0 0 2px #dc2626; }
+}
+
+.cell-short-hours {
+  animation: pulse-red-bg 1.2s ease-in-out infinite;
+  background-color: #fca5a5 !important;
+}
+
+.cell-short-hours input {
+  background-color: transparent !important;
+}
+
+.cell-short-hours-commented {
+  background-color: #fef9c3 !important;
+  border-left: 3px solid #f59e0b !important;
+}

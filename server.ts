@@ -107,6 +107,21 @@ async function startServer() {
     }
   };
 
+  // === HELPERS ===
+  // Superadmin = konto 'admin' (username) — ma pełny dostęp do wszystkich hal
+  const isSuperAdmin = (user: any) => user.username === 'admin';
+
+  // Zwraca liste hall_id do których user ma dostęp (null = wszystkie)
+  const getAllowedHallIds = (user: any): number[] | null => {
+    if (isSuperAdmin(user)) return null;
+    // Adminowie, foremani i mistrzowie — sprawdź user_halls
+    const rows = db.prepare("SELECT hall_id FROM user_halls WHERE user_id = ?").all(user.id) as any[];
+    if (rows.length > 0) return rows.map(r => r.hall_id);
+    // Fallback dla foreman/mistrz bez wpisów w user_halls: tylko własna hala
+    if ((user.role === 'foreman' || user.role === 'mistrz') && user.hall_id) return [user.hall_id];
+    return [];
+  };
+
   // Login
   app.post("/api/auth/login", (req, res) => {
     const { username, password } = req.body;
@@ -160,16 +175,67 @@ async function startServer() {
     res.json({ user });
   });
 
+  // User-Halls management
+  app.get("/api/user-halls/:userId", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const rows = db.prepare("SELECT hall_id FROM user_halls WHERE user_id = ?").all(req.params.userId);
+    res.json(rows);
+  });
+
+  app.put("/api/user-halls/:userId", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const { hall_ids } = req.body;
+    const userId = parseInt(req.params.userId);
+    // Zwykły admin może zarządzać tylko użytkownikami swoich hal i tylko w ramach swoich hal
+    if (!isSuperAdmin(req.user)) {
+      const myHalls = getAllowedHallIds(req.user) || [];
+      // Sprawdź czy target user należy do hal tego admina
+      const targetUser = db.prepare("SELECT id, hall_id, role FROM users WHERE id = ?").get(userId) as any;
+      if (!targetUser) return res.status(404).json({ error: "Użytkownik nie istnieje" });
+      if (targetUser.role === 'admin') return res.status(403).json({ error: "Nie możesz zarządzać halami innego admina" });
+      if (targetUser.hall_id && !myHalls.includes(targetUser.hall_id)) {
+        return res.status(403).json({ error: "Brak dostępu do tego użytkownika" });
+      }
+      // Filtruj hall_ids — admin może przypisać tylko swoje hale
+      const filteredIds = (hall_ids || []).filter((hid: number) => myHalls.includes(hid));
+      db.prepare("DELETE FROM user_halls WHERE user_id = ?").run(userId);
+      filteredIds.forEach((hid: number) => {
+        db.prepare("INSERT OR IGNORE INTO user_halls (user_id, hall_id) VALUES (?, ?)").run(userId, hid);
+      });
+      return res.json({ success: true });
+    }
+    // Superadmin — pełna kontrola
+    db.prepare("DELETE FROM user_halls WHERE user_id = ?").run(userId);
+    (hall_ids || []).forEach((hid: number) => {
+      db.prepare("INSERT OR IGNORE INTO user_halls (user_id, hall_id) VALUES (?, ?)").run(userId, hid);
+    });
+    res.json({ success: true });
+  });
+
   // Users CRUD
   app.get("/api/users", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const users = db.prepare("SELECT id, username, role, hall_id, employee_number FROM users").all();
-    res.json(users);
+    if (isSuperAdmin(req.user)) {
+      const users = db.prepare("SELECT id, username, role, hall_id, employee_number FROM users").all();
+      res.json(users);
+    } else {
+      // Zwykly admin widzi tylko siebie + foremanow/mistrzow swoich hal
+      const allowedHalls = getAllowedHallIds(req.user) || [];
+      if (allowedHalls.length === 0) return res.json([req.user]);
+      const placeholders = allowedHalls.map(() => '?').join(',');
+      const users = db.prepare(`SELECT id, username, role, hall_id, employee_number FROM users WHERE id = ? OR (role IN ('foreman','mistrz') AND hall_id IN (${placeholders}))`).all(req.user.id, ...allowedHalls);
+      res.json(users);
+    }
   });
 
   app.post("/api/users", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
     const { username, password, role, hall_id, employee_number, first_name, last_name } = req.body;
+    // Zwykly admin moze tworzyc tylko konta dla swoich hal
+    if (!isSuperAdmin(req.user) && hall_id) {
+      const allowed = getAllowedHallIds(req.user) || [];
+      if (!allowed.includes(parseInt(hall_id))) return res.status(403).json({ error: "Brak dostepu do tej hali" });
+    }
     try {
       // Walidacja dla mistrza/brygadzisty
       if ((role === 'mistrz' || role === 'foreman') && (!hall_id || !first_name || !last_name)) {
@@ -233,6 +299,8 @@ async function startServer() {
       // Pobierz aktualne dane użytkownika
       const existing = db.prepare("SELECT u.*, h.name as hall_name FROM users u LEFT JOIN halls h ON u.hall_id = h.id WHERE u.id = ?").get(req.params.id) as any;
       if (!existing) return res.status(404).json({ error: "Użytkownik nie znaleziony" });
+      // Ochrona konta superadmin
+      if (existing.username === 'admin' && !isSuperAdmin(req.user)) return res.status(403).json({ error: "Nie możesz edytować konta głównego administratora" });
       
       // Aktualizuj użytkownika
       db.prepare("UPDATE users SET username = ?, role = ?, hall_id = ?, employee_number = ? WHERE id = ?")
@@ -267,6 +335,8 @@ async function startServer() {
       // Pobierz dane użytkownika przed usunięciem
       const userToDelete = db.prepare("SELECT u.*, h.name as hall_name FROM users u LEFT JOIN halls h ON u.hall_id = h.id WHERE u.id = ?").get(req.params.id) as any;
       if (!userToDelete) return res.status(404).json({ error: "Użytkownik nie znaleziony" });
+      // Ochrona konta superadmin — nikt nie może go usunąć
+      if (userToDelete.username === 'admin') return res.status(403).json({ error: "Nie można usunąć konta głównego administratora" });
       
       const roleNames: Record<string, string> = { admin: 'Administrator', mistrz: 'Mistrz', foreman: 'Brygadzista', user: 'Użytkownik' };
       
@@ -291,6 +361,13 @@ async function startServer() {
 
   // Halls CRUD
   app.get("/api/halls", authenticate, (req: any, res) => {
+    if (!isSuperAdmin(req.user)) {
+      const allowedIds = getAllowedHallIds(req.user) || [];
+      if (allowedIds.length === 0) return res.json([]);
+      const placeholders = allowedIds.map(() => '?').join(',');
+      const halls = db.prepare(`SELECT * FROM halls WHERE id IN (${placeholders})`).all(...allowedIds);
+      return res.json(halls);
+    }
     const halls = db.prepare("SELECT * FROM halls").all();
     res.json(halls);
   });
@@ -323,6 +400,78 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Day comments (short-hour explanations)
+  app.get("/api/day-comments", authenticate, (req: any, res) => {
+    const { hall_id, month } = req.query;
+    if (!hall_id || !month) return res.status(400).json({ error: "Wymagane: hall_id, month" });
+    const start = `${month}-01`;
+    const end = `${month}-31`;
+    const rows = db.prepare(`
+      SELECT dc.*, e.first_name, e.last_name, u.username as author_name
+      FROM day_comments dc
+      JOIN employees e ON e.id = dc.employee_id
+      JOIN users u ON u.id = dc.author_id
+      WHERE e.hall_id = ? AND dc.date >= ? AND dc.date <= ?
+      ORDER BY dc.date ASC
+    `).all(hall_id, start, end);
+    res.json(rows);
+  });
+
+  app.post("/api/day-comments", authenticate, (req: any, res) => {
+    const isSupervisorOrAdmin = req.user.role === "admin" || req.user.role === "mistrz" || req.user.role === "foreman";
+    if (!isSupervisorOrAdmin) return res.status(403).json({ error: "Forbidden" });
+    const { employee_id, date, comment } = req.body;
+    if (!employee_id || !date || !comment?.trim()) return res.status(400).json({ error: "Wymagane: employee_id, date, comment" });
+    db.prepare(`
+      INSERT INTO day_comments (employee_id, date, comment, author_id, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(employee_id, date) DO UPDATE SET comment = excluded.comment, author_id = excluded.author_id, created_at = excluded.created_at
+    `).run(employee_id, date, comment.trim(), req.user.id, getLocalTimestamp());
+    res.json({ success: true });
+  });
+
+  app.delete("/api/day-comments", authenticate, (req: any, res) => {
+    const isSupervisorOrAdmin = req.user.role === "admin" || req.user.role === "mistrz" || req.user.role === "foreman";
+    if (!isSupervisorOrAdmin) return res.status(403).json({ error: "Forbidden" });
+    const { employee_id, date } = req.body;
+    if (!employee_id || !date) return res.status(400).json({ error: "Wymagane: employee_id, date" });
+    db.prepare("DELETE FROM day_comments WHERE employee_id = ? AND date = ?").run(employee_id, date);
+    res.json({ success: true });
+  });
+
+  // Qualifications CRUD
+  app.get("/api/qualifications", authenticate, (_req: any, res) => {
+    const rows = db.prepare("SELECT * FROM qualifications ORDER BY name ASC").all();
+    res.json(rows);
+  });
+
+  app.post("/api/qualifications", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const { name, hours_mode } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: "Nazwa kwalifikacji jest wymagana" });
+    const trimmed = name.trim();
+    const mode = (hours_mode === 'deduction') ? 'deduction' : 'standard';
+    const existing = db.prepare("SELECT id FROM qualifications WHERE name = ?").get(trimmed);
+    if (existing) return res.status(409).json({ error: "Kwalifikacja o tej nazwie już istnieje" });
+    const info = db.prepare("INSERT INTO qualifications (name, hours_mode) VALUES (?, ?)").run(trimmed, mode);
+    const modeLabel = mode === 'deduction' ? ' (z potrąceniem -0.5h/dzień)' : '';
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "DODANO_KWALIFIKACJE", `Kwalifikacja: ${trimmed}${modeLabel}`, getLocalTimestamp()
+    );
+    res.json({ id: info.lastInsertRowid, name: trimmed, hours_mode: mode });
+  });
+
+  app.delete("/api/qualifications/:id", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const qual = db.prepare("SELECT * FROM qualifications WHERE id = ?").get(req.params.id) as any;
+    if (!qual) return res.status(404).json({ error: "Nie znaleziono kwalifikacji" });
+    db.prepare("DELETE FROM qualifications WHERE id = ?").run(req.params.id);
+    db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+      req.user.id, "USUNIETO_KWALIFIKACJE", `Kwalifikacja: ${qual.name}`, getLocalTimestamp()
+    );
+    res.json({ success: true });
+  });
+
   // Employees CRUD
   app.get("/api/employees", authenticate, (req: any, res) => {
     const hallId = req.query.hall_id;
@@ -345,7 +494,7 @@ async function startServer() {
     const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
-    const { first_name, last_name, hall_id, position, employee_number, employment_type } = req.body;
+    const { first_name, last_name, hall_id, position, employee_number, employment_type, qualifications } = req.body;
     
     // Mistrzowie i brygadziści mogą dodawać pracowników do wszystkich hal (zastępstwa)
     
@@ -353,12 +502,12 @@ async function startServer() {
     const positionLower = (position || '').toLowerCase();
     const isSupervisor = positionLower.includes('mistrz') || positionLower.includes('brygadzista') ? 1 : 0;
 
-    const stmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position, employee_number, employment_type, is_supervisor) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    const info = stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', isSupervisor);
+    const stmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position, employee_number, employment_type, is_supervisor, qualifications) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    const info = stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', isSupervisor, qualifications || '');
     
     const hall = db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any;
     db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-      req.user.id, "DODANO_PRACOWNIKA", `${first_name} ${last_name} | Nr: ${employee_number || '-'} | Stanowisko: ${position || '-'} | Hala: ${hall?.name || '-'} | Forma: ${employment_type || 'Etat'}`, getLocalTimestamp()
+      req.user.id, "DODANO_PRACOWNIKA", `${first_name} ${last_name} | Nr: ${employee_number || '-'} | Stanowisko: ${position || '-'} | Hala: ${hall?.name || '-'} | Forma: ${employment_type || 'Etat'} | Kwalif: ${qualifications || '-'}`, getLocalTimestamp()
     );
     res.json({ id: info.lastInsertRowid });
   });
@@ -367,7 +516,7 @@ async function startServer() {
     const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
-    const { first_name, last_name, hall_id, position, employee_number, employment_type } = req.body;
+    const { first_name, last_name, hall_id, position, employee_number, employment_type, qualifications } = req.body;
     
     // Pobierz aktualne dane pracownika
     const existing = db.prepare("SELECT * FROM employees WHERE id = ?").get(req.params.id) as any;
@@ -382,8 +531,8 @@ async function startServer() {
     const positionLower = (position || '').toLowerCase();
     const isSupervisor = positionLower.includes('mistrz') || positionLower.includes('brygadzista') ? 1 : 0;
 
-    const stmt = db.prepare("UPDATE employees SET first_name = ?, last_name = ?, hall_id = ?, position = ?, employee_number = ?, employment_type = ?, is_supervisor = ? WHERE id = ?");
-    stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', isSupervisor, req.params.id);
+    const stmt = db.prepare("UPDATE employees SET first_name = ?, last_name = ?, hall_id = ?, position = ?, employee_number = ?, employment_type = ?, is_supervisor = ?, qualifications = ? WHERE id = ?");
+    stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', isSupervisor, qualifications || '', req.params.id);
     
     // Szczegółowe logowanie zmian
     const changes: string[] = [];
@@ -741,16 +890,18 @@ async function startServer() {
 
   app.post("/api/notification-emails", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const { email } = req.body;
+    const { email, is_global, user_id } = req.body;
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: "Nieprawidłowy adres email" });
     }
     try {
-      const info = db.prepare("INSERT INTO notification_emails (email) VALUES (?)").run(email);
+      const globalFlag = is_global ? 1 : 0;
+      const info = db.prepare("INSERT INTO notification_emails (email, is_global, user_id) VALUES (?, ?, ?)").run(email, globalFlag, user_id || null);
+      const typeLabel = globalFlag ? 'globalny' : (user_id ? `przypisany do użytkownika ID:${user_id}` : 'bez przypisania');
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, "DODANO_EMAIL_POWIADOMIEN", `Dodano email: ${email}`, getLocalTimestamp()
+        req.user.id, "DODANO_EMAIL_POWIADOMIEN", `Dodano email: ${email} (${typeLabel})`, getLocalTimestamp()
       );
-      res.json({ id: info.lastInsertRowid, email });
+      res.json({ id: info.lastInsertRowid, email, is_global: globalFlag, user_id: user_id || null });
     } catch (e: any) {
       if (e.message?.includes('UNIQUE')) {
         return res.status(400).json({ error: "Ten email już istnieje" });
@@ -804,14 +955,28 @@ async function startServer() {
       return res.status(404).json({ error: "Pracownik nie znaleziony" });
     }
 
-    // Pobierz listę emaili do powiadomień
-    const emails = db.prepare("SELECT email FROM notification_emails").all() as any[];
-    
-    if (emails.length === 0) {
-      return res.json({ sent: false, reason: "Brak skonfigurowanych emaili" });
+    // Pobierz listę emaili do powiadomień z filtrowaniem per hala
+    const hallId = employee.hall_id;
+    const allEmails = db.prepare("SELECT ne.*, uh.hall_id as assigned_hall FROM notification_emails ne LEFT JOIN user_halls uh ON uh.user_id = ne.user_id").all() as any[];
+
+    // Odbiorcy = globalni + ci których user ma tę halę przypisaną + bez user_id (legacy)
+    const recipientEmails = new Set<string>();
+    allEmails.forEach((row: any) => {
+      if (row.is_global) {
+        recipientEmails.add(row.email);
+      } else if (!row.user_id) {
+        // legacy — bez przypisania, traktuj jako globalny
+        recipientEmails.add(row.email);
+      } else if (row.assigned_hall === hallId) {
+        recipientEmails.add(row.email);
+      }
+    });
+
+    if (recipientEmails.size === 0) {
+      return res.json({ sent: false, reason: "Brak skonfigurowanych emaili dla tej hali" });
     }
 
-    const recipients = emails.map(e => e.email);
+    const recipients = Array.from(recipientEmails);
     const hoursExceeded = hours_used - hours_limit;
 
     const data: LimitExceededData = {

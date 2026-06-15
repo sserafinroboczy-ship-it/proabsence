@@ -2,7 +2,7 @@
 # Autor: Sebastian Serafin
 # Data: 13.05.2026
 
-$VERSION = "1.0.0"
+$VERSION = "1.0.5"
 $DOCKER_USER = "sserafinroboczy"
 $APP_NAME = "proabsence"
 

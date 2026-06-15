@@ -4,7 +4,8 @@ import * as XLSX from "xlsx";
 import { Database, RefreshCw, Pencil, X } from "lucide-react";
 import { format } from "date-fns";
 
-export default function Admin() {
+export default function Admin({ user }: { user: any }) {
+  const isSuperAdmin = user?.username === 'admin';
   const [users, setUsers] = useState<any[]>([]);
   const [halls, setHalls] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -14,6 +15,9 @@ export default function Admin() {
   const [confirmingUserId, setConfirmingUserId] = useState<number | null>(null);
   const [confirmingEmployeeId, setConfirmingEmployeeId] = useState<number | null>(null);
   const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [managingHallsUser, setManagingHallsUser] = useState<any | null>(null);
+  const [managingHallIds, setManagingHallIds] = useState<number[]>([]);
+  const [db_userHalls, setDbUserHalls] = useState<Record<number, number[]>>({});
   
   // Filtry pracowników
   const [employeeFilter, setEmployeeFilter] = useState({ name: "", position: "", hall_id: "", employment_type: "" });
@@ -34,13 +38,20 @@ export default function Admin() {
   // Powiadomienia mailowe
   const [notificationEmails, setNotificationEmails] = useState<any[]>([]);
   const [newEmail, setNewEmail] = useState("");
+  const [newEmailIsGlobal, setNewEmailIsGlobal] = useState(false);
+  const [newEmailUserId, setNewEmailUserId] = useState("");
   const [addingEmail, setAddingEmail] = useState(false);
   
   // Forms
   const [newUser, setNewUser] = useState({ username: "", password: "", role: "foreman", hall_id: "", employee_number: "", first_name: "", last_name: "" });
   const [newHall, setNewHall] = useState({ name: "", is_active: true, shift_count: 2 });
   const [editingHall, setEditingHall] = useState<any | null>(null);
-  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", hall_id: "", employee_number: "", employment_type: "Etat" });
+  const [newEmployee, setNewEmployee] = useState({ first_name: "", last_name: "", position: "", hall_id: "", employee_number: "", employment_type: "Etat", qualifications: "" });
+  const [qualificationsList, setQualificationsList] = useState<any[]>([]);
+  const [newQualName, setNewQualName] = useState("");
+  const [newQualHoursMode, setNewQualHoursMode] = useState<'standard' | 'deduction'>('standard');
+  const [addingQual, setAddingQual] = useState(false);
+  const [qualError, setQualError] = useState<string | null>(null);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -105,9 +116,15 @@ export default function Admin() {
     try {
       await fetchApi("/api/notification-emails", {
         method: "POST",
-        body: JSON.stringify({ email: newEmail })
+        body: JSON.stringify({
+          email: newEmail,
+          is_global: newEmailIsGlobal,
+          user_id: (!newEmailIsGlobal && newEmailUserId) ? parseInt(newEmailUserId) : null
+        })
       });
       setNewEmail("");
+      setNewEmailIsGlobal(false);
+      setNewEmailUserId("");
       loadNotificationEmails();
     } catch (err: any) {
       setError(err.message);
@@ -129,6 +146,19 @@ export default function Admin() {
     fetchApi("/api/halls").then(setHalls);
     fetchApi("/api/employees").then(setEmployees);
     fetchApi("/api/backups").then(setBackups);
+    fetchApi("/api/qualifications").then(setQualificationsList).catch(() => {});
+    // Załaduj przypisania hal dla adminów, foreman i mistrz
+    fetchApi("/api/users").then(async (usersData: any[]) => {
+      const managedUsers = usersData.filter(u => ['admin', 'foreman', 'mistrz'].includes(u.role) && u.username !== 'admin');
+      const map: Record<number, number[]> = {};
+      await Promise.all(managedUsers.map(async (u: any) => {
+        try {
+          const rows = await fetchApi(`/api/user-halls/${u.id}`);
+          map[u.id] = rows.map((r: any) => r.hall_id);
+        } catch {}
+      }));
+      setDbUserHalls(map);
+    }).catch(() => {});
     loadLogs(logsMonth); // Odśwież logi przy każdej akcji
     loadSettings();
     loadNotificationEmails();
@@ -268,7 +298,7 @@ export default function Admin() {
         method: "POST",
         body: JSON.stringify(newEmployee)
       });
-      setNewEmployee({ first_name: "", last_name: "", position: "", hall_id: "", employee_number: "", employment_type: "Etat" });
+      setNewEmployee({ first_name: "", last_name: "", position: "", hall_id: "", employee_number: "", employment_type: "Etat", qualifications: "" });
       loadData();
     } catch (err: any) {
       setError(err.message);
@@ -516,52 +546,63 @@ export default function Admin() {
               };
               const hallName = halls.find(h => h.id === u.hall_id)?.name;
               return (
-              <li key={u.id} className="py-3 flex justify-between items-center">
+              <li key={u.id} className={`py-3 flex justify-between items-center ${u.username === 'admin' ? 'bg-amber-50 rounded-lg px-2' : ''}`}>
                 <div>
-                  <p className="font-medium">{u.username}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">{u.username}</p>
+                    {u.username === 'admin' && <span className="text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full font-bold">SUPERADMIN</span>}
+                  </div>
                   <p className="text-xs text-gray-500">Rola: {roleNames[u.role] || u.role} {hallName ? `| Hala: ${hallName}` : ""}</p>
+                  {(u.role === 'admin' || u.role === 'foreman' || u.role === 'mistrz') && u.username !== 'admin' && (() => {
+                    const uhRows = (db_userHalls[u.id] || []);
+                    return uhRows.length > 0
+                      ? <p className="text-[10px] text-teal-600">Hale: {uhRows.map((hid: number) => halls.find(h => h.id === hid)?.name).filter(Boolean).join(', ')}</p>
+                      : <p className="text-[10px] text-red-400">Brak przypisanych hal (widzi tylko własną)</p>;
+                  })()}
                 </div>
-                <div className="flex items-center gap-3">
-                  <button 
-                    type="button"
-                    onClick={() => setEditingUser({...u})}
-                    className="text-blue-600 hover:text-blue-800 p-1"
-                    title="Edytuj użytkownika"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => handleResetPassword(u.id)}
-                    className="text-sm text-amber-600 hover:text-amber-800"
-                  >
-                    Reset
-                  </button>
-                  {confirmingUserId === u.id ? (
-                    <div className="flex items-center gap-2">
-                       <button 
-                          type="button"
-                          onClick={() => handleDeleteUser(u.id)}
-                          className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
-                        >
-                          Tak, usuń
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => setConfirmingUserId(null)}
-                          className="text-xs text-gray-400 hover:text-gray-600"
-                        >
-                          Nie
-                        </button>
-                    </div>
-                  ) : (
-                    <button 
+                <div className="flex items-center gap-2">
+                  {u.username !== 'admin' && (u.role === 'admin' || u.role === 'foreman' || u.role === 'mistrz') && (
+                    <button
                       type="button"
-                      onClick={() => setConfirmingUserId(u.id)}
-                      className="text-sm text-red-600 hover:text-red-800"
+                      onClick={async () => {
+                        const rows = await fetchApi(`/api/user-halls/${u.id}`);
+                        setManagingHallIds(rows.map((r: any) => r.hall_id));
+                        setManagingHallsUser(u);
+                      }}
+                      className="text-xs text-teal-600 hover:text-teal-800 border border-teal-200 px-2 py-1 rounded"
+                      title="Zarządzaj dostępem do hal"
                     >
-                      Usuń
+                      Hale
                     </button>
+                  )}
+                  {u.username !== 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingUser({...u})}
+                      className="text-blue-600 hover:text-blue-800 p-1"
+                      title="Edytuj użytkownika"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
+                  {u.username !== 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => handleResetPassword(u.id)}
+                      className="text-sm text-amber-600 hover:text-amber-800"
+                    >
+                      Reset
+                    </button>
+                  )}
+                  {u.username !== 'admin' && (
+                    confirmingUserId === u.id ? (
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => handleDeleteUser(u.id)} className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700">Tak, usuń</button>
+                        <button type="button" onClick={() => setConfirmingUserId(null)} className="text-xs text-gray-400 hover:text-gray-600">Nie</button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setConfirmingUserId(u.id)} className="text-sm text-red-600 hover:text-red-800">Usuń</button>
+                    )
                   )}
                 </div>
               </li>
@@ -570,6 +611,70 @@ export default function Admin() {
           </ul>
         </div>
       </div>
+
+      {/* Modal zarządzania dostępem do hal dla admina */}
+      {managingHallsUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-teal-50">
+              <div>
+                <h3 className="text-base font-bold text-gray-800">Dostęp do hal</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {managingHallsUser.role === 'admin' ? 'Administrator' : managingHallsUser.role === 'mistrz' ? 'Mistrz' : 'Brygadzista'}: <span className="font-semibold">{managingHallsUser.username}</span>
+                </p>
+              </div>
+              <button onClick={() => setManagingHallsUser(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5">
+              <p className="text-sm text-gray-600 mb-4">Wybierz hale/obszary widoczne dla tego użytkownika:</p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {halls.map(hall => (
+                  <label key={hall.id} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={managingHallIds.includes(hall.id)}
+                      onChange={e => {
+                        setManagingHallIds(prev =>
+                          e.target.checked ? [...prev, hall.id] : prev.filter(id => id !== hall.id)
+                        );
+                      }}
+                      className="w-4 h-4 text-teal-600 rounded"
+                    />
+                    <span className="text-sm font-medium text-gray-700">{hall.name}</span>
+                    {!hall.is_active && <span className="text-[10px] text-gray-400">(nieaktywna)</span>}
+                  </label>
+                ))}
+              </div>
+              {managingHallIds.length === 0 && (
+                <p className="text-xs text-red-500 mt-2">⚠️ Bez przypisanych hal użytkownik będzie widział tylko swoją domyślną halę</p>
+              )}
+            </div>
+            <div className="p-5 border-t border-gray-100 flex gap-3 justify-end">
+              <button type="button" onClick={() => setManagingHallsUser(null)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Anuluj</button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await fetchApi(`/api/user-halls/${managingHallsUser.id}`, {
+                      method: "PUT",
+                      body: JSON.stringify({ hall_ids: managingHallIds })
+                    });
+                    setDbUserHalls(prev => ({ ...prev, [managingHallsUser.id]: managingHallIds }));
+                    setManagingHallsUser(null);
+                  } catch (err: any) {
+                    setError(err.message || "Błąd zapisu");
+                  }
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-teal-600 hover:bg-teal-700 rounded-lg transition-colors"
+              >
+                Zapisz dostęp
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Ustawienia Limitów Godzin */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -629,47 +734,199 @@ export default function Admin() {
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
         <h3 className="text-lg font-semibold mb-4">📧 Powiadomienia Mailowe</h3>
         <p className="text-sm text-gray-500 mb-4">
-          Dodaj adresy email osób, które mają otrzymywać powiadomienia o przekroczeniu limitu godzin przez pracowników Agencji/DG.
+          Dodaj adresy email osób, które mają otrzymywać powiadomienia o przekroczeniu limitu godzin.
+          <span className="ml-1 text-amber-600 font-medium">Globalny</span> = dostaje powiadomienia ze wszystkich hal.
+          <span className="ml-1 text-teal-600 font-medium">Przypisany do admina</span> = tylko z jego hal.
         </p>
-        
-        <div className="flex gap-3 mb-4">
-          <input
-            type="email"
-            placeholder="Wprowadź adres email..."
-            value={newEmail}
-            onChange={e => setNewEmail(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAddEmail()}
-            className="flex-1 border border-gray-300 rounded-lg px-4 py-2"
-          />
-          <button
-            type="button"
-            onClick={handleAddEmail}
-            disabled={addingEmail}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
-          >
-            {addingEmail ? '...' : 'Dodaj'}
-          </button>
+
+        <div className="space-y-3 mb-5 p-4 bg-gray-50 rounded-xl border border-gray-200">
+          <div className="flex gap-3">
+            <input
+              type="email"
+              placeholder="Adres email..."
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddEmail()}
+              className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-4 flex-wrap">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newEmailIsGlobal}
+                onChange={e => { setNewEmailIsGlobal(e.target.checked); if (e.target.checked) setNewEmailUserId(""); }}
+                className="w-4 h-4 text-amber-500 rounded"
+              />
+              <span className="text-sm font-medium text-amber-700">Globalny (wszystkie hale)</span>
+            </label>
+            {!newEmailIsGlobal && (
+              <select
+                value={newEmailUserId}
+                onChange={e => setNewEmailUserId(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[200px]"
+              >
+                <option value="">Bez przypisania do admina (legacy globalny)</option>
+                {users.filter(u => u.role === 'admin' && u.username !== 'admin').map(u => (
+                  <option key={u.id} value={u.id}>{u.username} — tylko jego hale</option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={handleAddEmail}
+              disabled={addingEmail}
+              className="bg-blue-600 text-white px-5 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium text-sm"
+            >
+              {addingEmail ? '...' : 'Dodaj'}
+            </button>
+          </div>
         </div>
 
         {notificationEmails.length > 0 ? (
           <div className="space-y-2">
-            {notificationEmails.map(email => (
-              <div key={email.id} className="flex items-center justify-between bg-gray-50 px-4 py-3 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <span className="text-blue-600">📧</span>
-                  <span className="text-gray-800">{email.email}</span>
+            {notificationEmails.map(email => {
+              const assignedUser = email.user_id ? users.find(u => u.id === email.user_id) : null;
+              const hallsForUser = email.user_id ? (db_userHalls[email.user_id] || []).map((hid: number) => halls.find(h => h.id === hid)?.name).filter(Boolean) : [];
+              return (
+                <div key={email.id} className={`flex items-center justify-between px-4 py-3 rounded-lg border ${
+                  email.is_global ? 'bg-amber-50 border-amber-200' : assignedUser ? 'bg-teal-50 border-teal-200' : 'bg-gray-50 border-gray-200'
+                }`}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-lg">{email.is_global ? '🌐' : assignedUser ? '👤' : '📧'}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{email.email}</p>
+                      {email.is_global && <p className="text-xs text-amber-600 font-medium">Globalny — wszystkie hale</p>}
+                      {!email.is_global && assignedUser && (
+                        <p className="text-xs text-teal-600">
+                          Admin: <span className="font-semibold">{assignedUser.username}</span>
+                          {hallsForUser.length > 0 ? ` — ${hallsForUser.join(', ')}` : ' — brak przypisanych hal'}
+                        </p>
+                      )}
+                      {!email.is_global && !assignedUser && <p className="text-xs text-gray-400">Legacy — wszystkie hale</p>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteEmail(email.id)}
+                    className="text-red-500 hover:text-red-700 text-sm font-medium ml-3 shrink-0"
+                  >
+                    Usuń
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleDeleteEmail(email.id)}
-                  className="text-red-500 hover:text-red-700 text-sm font-medium"
-                >
-                  Usuń
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <p className="text-gray-400 text-sm italic">Brak skonfigurowanych adresów email</p>
+        )}
+      </div>
+
+      {/* Zarządzanie Kwalifikacjami */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="text-lg font-semibold mb-1 flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-teal-500 inline-block"></span>
+          Kwalifikacje Pracowników
+        </h3>
+        <p className="text-xs text-gray-400 mb-5">Lista kwalifikacji dostępnych przy dodawaniu i edycji pracowników</p>
+
+        {qualError && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{qualError}</div>
+        )}
+
+        {/* Formularz dodawania */}
+        <form
+          onSubmit={async e => {
+            e.preventDefault();
+            setQualError(null);
+            if (!newQualName.trim()) return;
+            setAddingQual(true);
+            try {
+              await fetchApi("/api/qualifications", {
+                method: "POST",
+                body: JSON.stringify({ name: newQualName.trim(), hours_mode: newQualHoursMode })
+              });
+              setNewQualName("");
+              setNewQualHoursMode('standard');
+              fetchApi("/api/qualifications").then(setQualificationsList);
+            } catch (err: any) {
+              setQualError(err.message || "Błąd dodawania kwalifikacji");
+            }
+            setAddingQual(false);
+          }}
+          className="space-y-3 mb-6"
+        >
+          <div className="flex gap-3">
+            <input
+              type="text"
+              placeholder="Nazwa kwalifikacji (np. Spawacz TIG)"
+              value={newQualName}
+              onChange={e => setNewQualName(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 flex-1 text-sm focus:ring-2 focus:ring-teal-300 focus:border-teal-400 outline-none"
+              maxLength={50}
+            />
+            <button
+              type="submit"
+              disabled={addingQual || !newQualName.trim()}
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {addingQual ? "Dodaję..." : "+ Dodaj"}
+            </button>
+          </div>
+          <div className="flex items-center gap-4 px-1">
+            <p className="text-xs text-gray-500 font-medium">Liczenie godzin:</p>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="hoursMode"
+                value="standard"
+                checked={newQualHoursMode === 'standard'}
+                onChange={() => setNewQualHoursMode('standard')}
+                className="text-teal-600"
+              />
+              <span className="text-xs text-gray-700">Standardowe (1:1)</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="hoursMode"
+                value="deduction"
+                checked={newQualHoursMode === 'deduction'}
+                onChange={() => setNewQualHoursMode('deduction')}
+                className="text-orange-500"
+              />
+              <span className="text-xs text-orange-700 font-medium">Z potrąceniem (-0.5h/dzień obecności)</span>
+            </label>
+          </div>
+        </form>
+
+        {/* Lista kwalifikacji */}
+        {qualificationsList.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">Brak kwalifikacji — dodaj pierwszą powyżej</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {qualificationsList.map(q => (
+              <div key={q.id} className={`flex items-center gap-1.5 border rounded-full px-3 py-1.5 group ${
+                q.hours_mode === 'deduction' ? 'bg-orange-50 border-orange-200' : 'bg-teal-50 border-teal-100'
+              }`}>
+                <span className={`text-sm font-medium ${q.hours_mode === 'deduction' ? 'text-orange-700' : 'text-teal-700'}`}>{q.name}</span>
+                {q.hours_mode === 'deduction' && <span className="text-[10px] text-orange-500 font-semibold">-0.5h</span>}
+                <button
+                  onClick={async () => {
+                    setQualError(null);
+                    if (!window.confirm(`Usunąć kwalifikację "${q.name}"? Nie usunie jej z istniejących pracowników.`)) return;
+                    try {
+                      await fetchApi(`/api/qualifications/${q.id}`, { method: "DELETE" });
+                      fetchApi("/api/qualifications").then(setQualificationsList);
+                    } catch (err: any) {
+                      setQualError(err.message || "Błąd usuwania");
+                    }
+                  }}
+                  className="w-4 h-4 rounded-full bg-teal-200 hover:bg-red-400 text-teal-700 hover:text-white flex items-center justify-center transition-colors text-xs font-bold leading-none"
+                  title="Usuń kwalifikację"
+                >×</button>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -719,6 +976,26 @@ export default function Admin() {
               {halls.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
             </select>
           </div>
+          {qualificationsList.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 mb-2">
+              <span className="text-sm font-medium text-gray-700">Kwalifikacje:</span>
+              {qualificationsList.map(q => (
+                <label key={q.id} className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(newEmployee.qualifications || "").split(",").map(s => s.trim()).filter(Boolean).includes(q.name)}
+                    onChange={e => {
+                      const current = (newEmployee.qualifications || "").split(",").map(s => s.trim()).filter(Boolean);
+                      const updated = e.target.checked ? [...current, q.name] : current.filter(x => x !== q.name);
+                      setNewEmployee({...newEmployee, qualifications: updated.join(", ")});
+                    }}
+                    className="w-4 h-4 text-blue-600 rounded"
+                  />
+                  <span className="text-sm">{q.name}</span>
+                </label>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-4 mb-2">
             <span className="text-sm font-medium text-gray-700">Forma:</span>
             <label className="flex items-center gap-1.5 cursor-pointer">

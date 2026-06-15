@@ -25,6 +25,7 @@ export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
   const [selectedHallId, setSelectedHallId] = useState<number | "global">("global");
 
+  const [qualificationsConfig, setQualificationsConfig] = useState<any[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [expandedAlerts, setExpandedAlerts] = useState<{tomorrow: boolean, recurring: boolean, vacation: boolean}>({
     tomorrow: false,
@@ -40,6 +41,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    fetchApi("/api/qualifications").then(setQualificationsConfig).catch(() => {});
     fetchApi("/api/halls").then(data => {
       const activeHalls = data.filter((h: any) => h.is_active);
       setHalls(activeHalls);
@@ -466,6 +468,83 @@ export default function Dashboard() {
   // Top 3 nadzoru po godzinach
   const topSupervisors = [...supervisorStats].sort((a, b) => b.totalHours - a.totalHours).slice(0, 3);
 
+  // Dynamiczna lista kwalifikacji — zbierana ze wszystkich pracowników produkcyjnych
+  const QUALIFICATIONS = (() => {
+    const all = new Set<string>();
+    productionEmployees.forEach(e => {
+      (e.qualifications || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((q: string) => all.add(q));
+    });
+    return Array.from(all).sort();
+  })();
+
+  // Statystyki kwalifikacji dla wybranej hali lub globalnie (karty)
+  const qualStats = (() => {
+    const relevantEmployees = selectedHallId === "global"
+      ? productionEmployees
+      : productionEmployees.filter(e => e.hall_id === selectedHallId);
+    const relevantAbsences = selectedHallId === "global"
+      ? absences.filter(a => !supervisorIds.has(a.employee_id))
+      : absences.filter(a => a.hall_id === selectedHallId && !supervisorIds.has(a.employee_id));
+
+    return QUALIFICATIONS.map(q => {
+      const qConfig = qualificationsConfig.find((c: any) => c.name === q);
+      const isDeduction = qConfig?.hours_mode === 'deduction';
+      const empsWithQ = relevantEmployees.filter(e =>
+        (e.qualifications || '').split(',').map((s: string) => s.trim()).includes(q)
+      );
+      const empIds = new Set(empsWithQ.map((e: any) => e.id));
+      const qAbsences = relevantAbsences.filter(a => empIds.has(a.employee_id));
+      const rawHours = qAbsences.reduce((sum, a) => sum + (a.working_hours || 0) + (a.overtime_hours || 0), 0);
+      const presentDays = qAbsences.filter(a => a.type === 'present' && ((a.working_hours || 0) > 0 || (a.overtime_hours || 0) > 0)).length;
+      const totalHours = isDeduction ? Math.max(0, rawHours - presentDays * 0.5) : rawHours;
+      return { label: q, count: empsWithQ.length, totalHours, presentDays, isDeduction };
+    }).filter(q => q.count > 0);
+  })();
+
+  // Jedna globalna paleta unikalnych kolorów — używana dla hal na WSZYSTKICH wykresach
+  const HALL_PALETTE = [
+    "#3b82f6", // niebieski
+    "#10b981", // zielony
+    "#f59e0b", // żółty
+    "#ef4444", // czerwony
+    "#8b5cf6", // fioletowy
+    "#ec4899", // różowy
+    "#06b6d4", // cyjan
+    "#f97316", // pomarańczowy
+    "#84cc16", // limonka
+    "#0ea5e9", // błękitny
+    "#a855f7", // purpurowy
+    "#14b8a6", // turkusowy
+  ];
+
+  // Globalne statystyki kwalifikacji z podziałem na hale (wykres)
+  const QUAL_COLORS = ["#14b8a6", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#10b981", "#f97316", "#06b6d4"];
+  const globalQualChartData = QUALIFICATIONS.map((q, qi) => {
+    const qConfig = qualificationsConfig.find((c: any) => c.name === q);
+    const isDeduction = qConfig?.hours_mode === 'deduction';
+    const row: any = { qualification: q, color: QUAL_COLORS[qi % QUAL_COLORS.length], isDeduction };
+    let totalCount = 0;
+    let totalHours = 0;
+    halls.forEach(hall => {
+      const hallEmps = productionEmployees.filter(e =>
+        e.hall_id === hall.id &&
+        (e.qualifications || '').split(',').map((s: string) => s.trim()).includes(q)
+      );
+      const empIds = new Set(hallEmps.map((e: any) => e.id));
+      const hallAbsForQ = absences.filter(a => a.hall_id === hall.id && empIds.has(a.employee_id) && !supervisorIds.has(a.employee_id));
+      const rawHours = hallAbsForQ.reduce((sum, a) => sum + (a.working_hours || 0) + (a.overtime_hours || 0), 0);
+      const presentDays = hallAbsForQ.filter(a => a.type === 'present' && ((a.working_hours || 0) > 0 || (a.overtime_hours || 0) > 0)).length;
+      const hours = isDeduction ? Math.max(0, rawHours - presentDays * 0.5) : rawHours;
+      row[hall.name] = hours;
+      row[`${hall.name}_count`] = hallEmps.length;
+      totalCount += hallEmps.length;
+      totalHours += hours;
+    });
+    row.totalCount = totalCount;
+    row.totalHours = totalHours;
+    return row;
+  }).filter(r => r.totalCount > 0);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100 gap-4">
@@ -635,8 +714,7 @@ export default function Dashboard() {
                     />
                     <Legend wrapperStyle={{ paddingTop: 30 }} />
                     {halls.map((hall, index) => {
-                      const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
-                      const color = colors[index % colors.length];
+                      const color = HALL_PALETTE[index % HALL_PALETTE.length];
                       const isLastHall = index === halls.length - 1;
                       return (
                         <Bar 
@@ -737,14 +815,14 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
               <h4 className="text-base font-medium text-gray-700 mb-4">Frekwencja wg Hal (%)</h4>
-              <div className="h-[300px]">
+              <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={globalHallStats} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                  <BarChart data={globalHallStats} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
-                    <XAxis dataKey="name" />
+                    <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} tick={{ fontSize: 12 }} />
                     <YAxis />
                     <Tooltip cursor={{ fill: '#f9fafb' }} />
                     <Bar dataKey="Frekwencja" fill="#3b82f6" radius={[4, 4, 0, 0]}>
@@ -757,11 +835,11 @@ export default function Dashboard() {
 
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
               <h4 className="text-base font-medium text-gray-700 mb-4">Suma Nadgodzin wg Hal</h4>
-              <div className="h-[300px]">
+              <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={globalHallStats} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                  <BarChart data={globalHallStats} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
-                    <XAxis dataKey="name" />
+                    <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} tick={{ fontSize: 12 }} />
                     <YAxis />
                     <Tooltip cursor={{ fill: '#f9fafb' }} />
                     <Bar dataKey="Nadgodziny" fill="#8b5cf6" radius={[4, 4, 0, 0]}>
@@ -772,48 +850,140 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* Wykresy kwalifikacji — osobna karta per kwalifikacja */}
+          {globalQualChartData.length > 0 && (() => {
+            const hallColors = HALL_PALETTE;
+            const monthLabel = format(new Date(selectedMonth + "-01"), "MMMM yyyy", { locale: pl });
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 px-1">
+                  <span className="w-2 h-2 rounded-full bg-teal-500 inline-block"></span>
+                  <h4 className="text-base font-semibold text-gray-700">Statystyki Kwalifikacji — {monthLabel}</h4>
+                </div>
+                <div className={`grid gap-4 ${globalQualChartData.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+                  {globalQualChartData.map((q, qi) => {
+                    const qColor = QUAL_COLORS[qi % QUAL_COLORS.length];
+                    // Dane wykresu: jedna pozycja per hala
+                    const chartRows = halls
+                      .map(hall => ({
+                        hall: hall.name,
+                        Godziny: q[hall.name] || 0,
+                        Pracownicy: q[`${hall.name}_count`] || 0,
+                      }))
+                      .filter(r => r.Pracownicy > 0);
+                    return (
+                      <div key={q.qualification} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        {/* Nagłówek karty */}
+                        <div className="px-5 pt-5 pb-3 border-b border-gray-50 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: qColor }}></span>
+                            <h5 className="text-sm font-bold text-gray-800">{q.qualification}</h5>
+                            {q.isDeduction && (
+                              <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-semibold">-0.5h/dzień</span>
+                            )}
+                          </div>
+                          <span className="text-xs text-gray-400">{monthLabel}</span>
+                        </div>
+                        {/* Statystyki sumaryczne */}
+                        <div className="grid grid-cols-3 divide-x divide-gray-100 border-b border-gray-100">
+                          <div className="px-4 py-3 text-center">
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Pracownicy</p>
+                            <p className="text-xl font-black" style={{ color: qColor }}>{q.totalCount}</p>
+                          </div>
+                          <div className="px-4 py-3 text-center">
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Godziny łącznie</p>
+                            <p className="text-xl font-black" style={{ color: qColor }}>{q.totalHours}h</p>
+                          </div>
+                          <div className="px-4 py-3 text-center">
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Śr. / osoba</p>
+                            <p className="text-xl font-black" style={{ color: qColor }}>{q.totalCount > 0 ? Math.round(q.totalHours / q.totalCount) : 0}h</p>
+                          </div>
+                        </div>
+                        {/* Wykres: hale na osi X */}
+                        {chartRows.length > 0 ? (
+                          <div className="px-4 pt-4 pb-3" style={{ height: 200 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={chartRows} margin={{ top: 15, right: 10, left: -20, bottom: 5 }} barCategoryGap="35%">
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis dataKey="hall" tick={{ fontSize: 12, fontWeight: 'bold', fill: '#475569' }} axisLine={false} tickLine={false} />
+                                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                                <Tooltip
+                                  cursor={{ fill: '#f8fafc' }}
+                                  content={({ active, payload, label }) => {
+                                    if (!active || !payload?.length) return null;
+                                    const row = payload[0]?.payload;
+                                    return (
+                                      <div className="bg-white p-3 border border-gray-200 shadow-lg rounded-lg">
+                                        <p className="text-xs font-bold text-gray-700 mb-1">{label}</p>
+                                        <p className="text-xs" style={{ color: qColor }}><span className="font-semibold">Godziny:</span> {row.Godziny}h{q.isDeduction ? ' (po potrąceniu)' : ''}</p>
+                                        <p className="text-xs text-gray-500"><span className="font-semibold">Pracownicy:</span> {row.Pracownicy}</p>
+                                        <p className="text-xs text-gray-400">Śr: {row.Pracownicy > 0 ? Math.round(row.Godziny / row.Pracownicy) : 0}h/os.</p>
+                                      </div>
+                                    );
+                                  }}
+                                />
+                                <Bar dataKey="Godziny" fill={qColor} radius={[6, 6, 0, 0]}>
+                                  <LabelList dataKey="Godziny" position="top" fill={qColor} fontSize={11} fontWeight="bold" formatter={(v: number) => v > 0 ? `${v}h` : ''} />
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center h-24 text-xs text-gray-400">Brak danych</div>
+                        )}
+                        {/* Legenda z podziałem na hale */}
+                        <div className="px-5 pb-4 flex flex-wrap gap-2">
+                          {chartRows.map((r, hi) => (
+                            <div key={r.hall} className="flex items-center gap-1.5 bg-gray-50 rounded-full px-2.5 py-1">
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: hallColors[hi % hallColors.length] }}></div>
+                              <span className="text-[11px] text-gray-600 font-medium">{r.hall}: {r.Godziny}h / {r.Pracownicy} os.</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       ) : (
         <div className="space-y-6">
           {/* Hall Stats Summary - Row 1 */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Frekwencja */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500 font-medium mb-1">Średnia Frekwencja</p>
-                <p className="text-2xl font-bold text-blue-600">{hallStats.frequency}%</p>
-              </div>
-              <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
+              <div className="absolute top-4 right-4 w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center text-blue-400">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
               </div>
+              <p className="text-xs text-gray-500 font-medium mb-1">Średnia Frekwencja</p>
+              <p className="text-2xl font-bold text-blue-600">{hallStats.frequency}%</p>
             </div>
 
             {/* Suma nadgodzin */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500 font-medium mb-1">Suma Nadgodzin Hali</p>
-                <p className="text-2xl font-bold text-purple-600">{hallStats.totalOvertime}h</p>
-              </div>
-              <div className="w-12 h-12 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
+              <div className="absolute top-4 right-4 w-9 h-9 rounded-full bg-purple-50 flex items-center justify-center text-purple-400">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
+              <p className="text-xs text-gray-500 font-medium mb-1">Suma Nadgodzin Hali</p>
+              <p className="text-2xl font-bold text-purple-600">{hallStats.totalOvertime}h</p>
             </div>
 
             {/* Średni czas pracy */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500 font-medium mb-1">Śr. Czas Pracy/Dzień</p>
-                <p className="text-2xl font-bold text-cyan-600">{hallStats.avgWorkingHours}h</p>
-              </div>
-              <div className="w-12 h-12 rounded-full bg-cyan-50 flex items-center justify-center text-cyan-600">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
+              <div className="absolute top-4 right-4 w-9 h-9 rounded-full bg-cyan-50 flex items-center justify-center text-cyan-400">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
               </div>
+              <p className="text-xs text-gray-500 font-medium mb-1">Śr. Czas Pracy/Dzień</p>
+              <p className="text-2xl font-bold text-cyan-600">{hallStats.avgWorkingHours}h</p>
             </div>
 
           </div>
@@ -906,6 +1076,51 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+
+          {/* Kwalifikacje Section */}
+          {qualStats.length > 0 && (
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+              <h4 className="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-teal-500 inline-block"></span>
+                Statystyki Kwalifikacji — {format(new Date(selectedMonth + "-01"), "MMMM yyyy", { locale: pl })}
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {qualStats.map((q, i) => {
+                  const colors = [
+                    { bg: "bg-teal-50", border: "border-teal-100", badge: "bg-teal-100 text-teal-700", num: "text-teal-700", icon: "text-teal-400", dot: "bg-teal-500" },
+                    { bg: "bg-blue-50", border: "border-blue-100", badge: "bg-blue-100 text-blue-700", num: "text-blue-700", icon: "text-blue-400", dot: "bg-blue-500" },
+                    { bg: "bg-violet-50", border: "border-violet-100", badge: "bg-violet-100 text-violet-700", num: "text-violet-700", icon: "text-violet-400", dot: "bg-violet-500" },
+                  ];
+                  const c = colors[i % colors.length];
+                  return (
+                    <div key={q.label} className={`${c.bg} p-5 rounded-xl border ${c.border}`}>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${c.badge}`}>{q.label}</span>
+                        <svg className={`w-5 h-5 ${c.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      </div>
+                      <div className="flex items-end justify-between">
+                        <div>
+                          <p className="text-xs text-gray-500 mb-0.5">Pracownicy</p>
+                          <p className={`text-3xl font-bold ${c.num}`}>{q.count}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-gray-500 mb-0.5">Przepracowane</p>
+                          <p className={`text-2xl font-bold ${c.num}`}>{q.totalHours}h</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 pt-3 border-t border-white/60">
+                        <p className="text-xs text-gray-500">
+                          Śr. na osobę: <span className="font-semibold text-gray-700">{q.count > 0 ? Math.round(q.totalHours / q.count) : 0}h</span>
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Alerts Section */}
           {(hallStats.tomorrowAbsences.length > 0 || hallStats.recurringAbsences.length > 0 || hallStats.vacationLimitWarnings.length > 0) && (
