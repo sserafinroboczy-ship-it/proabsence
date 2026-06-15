@@ -481,8 +481,19 @@ async function startServer() {
     // Domyślnie nie pokazuj usuniętych pracowników (is_deleted = 0 lub NULL)
     const deletedFilter = includeDeleted ? '' : 'AND (is_deleted = 0 OR is_deleted IS NULL)';
     
+    // Ogranicz do hal usera (dla adminów/foreman/mistrz)
+    const allowedIds = getAllowedHallIds(req.user);
+    
     if (hallId) {
+      // Jeśli podano konkretną halę, sprawdź czy user ma do niej dostęp
+      if (allowedIds !== null && !allowedIds.includes(parseInt(hallId as string))) {
+        return res.json([]);
+      }
       employees = db.prepare(`SELECT * FROM employees WHERE hall_id = ? ${deletedFilter} ORDER BY sort_order ASC, id ASC`).all(hallId);
+    } else if (allowedIds !== null) {
+      if (allowedIds.length === 0) return res.json([]);
+      const placeholders = allowedIds.map(() => '?').join(',');
+      employees = db.prepare(`SELECT * FROM employees WHERE hall_id IN (${placeholders}) ${deletedFilter} ORDER BY hall_id ASC, sort_order ASC, id ASC`).all(...allowedIds);
     } else {
       employees = db.prepare(`SELECT * FROM employees WHERE 1=1 ${deletedFilter} ORDER BY hall_id ASC, sort_order ASC, id ASC`).all();
     }
@@ -697,6 +708,15 @@ async function startServer() {
     if (hall_id) {
       query += " AND e.hall_id = ?";
       params.push(hall_id);
+    } else {
+      // Ogranicz do hal usera (dla adminów/foreman/mistrz)
+      const allowedIds = getAllowedHallIds(req.user);
+      if (allowedIds !== null) {
+        if (allowedIds.length === 0) return res.json([]);
+        const placeholders = allowedIds.map(() => '?').join(',');
+        query += ` AND e.hall_id IN (${placeholders})`;
+        params.push(...allowedIds);
+      }
     }
     
     const absences = db.prepare(query).all(...params);
