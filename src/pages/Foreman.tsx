@@ -1994,7 +1994,7 @@ export default function Foreman({ user }: { user: any }) {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Kwalifikacje</label>
-                <div className="flex gap-4">
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
                   {qualificationsList.map(q => (
                     <label key={q.id} className="flex items-center gap-2 cursor-pointer">
                       <input
