@@ -5,6 +5,7 @@ import { Database, RefreshCw, Pencil, X } from "lucide-react";
 import { format } from "date-fns";
 
 export default function Admin({ user }: { user: any }) {
+  const isGuest = user?.role === 'guest';
   const isSuperAdmin = user?.username === 'admin';
   const [users, setUsers] = useState<any[]>([]);
   const [halls, setHalls] = useState<any[]>([]);
@@ -40,6 +41,7 @@ export default function Admin({ user }: { user: any }) {
   const [newEmail, setNewEmail] = useState("");
   const [newEmailIsGlobal, setNewEmailIsGlobal] = useState(false);
   const [newEmailUserId, setNewEmailUserId] = useState("");
+  const [newEmailNotifType, setNewEmailNotifType] = useState<'exceeded'|'warning'|'both'>('exceeded');
   const [addingEmail, setAddingEmail] = useState(false);
   
   // Forms
@@ -119,12 +121,14 @@ export default function Admin({ user }: { user: any }) {
         body: JSON.stringify({
           email: newEmail,
           is_global: newEmailIsGlobal,
-          user_id: (!newEmailIsGlobal && newEmailUserId) ? parseInt(newEmailUserId) : null
+          user_id: (!newEmailIsGlobal && newEmailUserId) ? parseInt(newEmailUserId) : null,
+          notification_type: newEmailNotifType
         })
       });
       setNewEmail("");
       setNewEmailIsGlobal(false);
       setNewEmailUserId("");
+      setNewEmailNotifType('exceeded');
       loadNotificationEmails();
     } catch (err: any) {
       setError(err.message);
@@ -135,6 +139,18 @@ export default function Admin({ user }: { user: any }) {
   const handleDeleteEmail = async (id: number) => {
     try {
       await fetchApi(`/api/notification-emails/${id}`, { method: "DELETE" });
+      loadNotificationEmails();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleChangeNotifType = async (id: number, notification_type: string) => {
+    try {
+      await fetchApi(`/api/notification-emails/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ notification_type })
+      });
       loadNotificationEmails();
     } catch (err: any) {
       setError(err.message);
@@ -352,7 +368,7 @@ export default function Admin({ user }: { user: any }) {
         {/* Zarządzanie Halami */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-semibold mb-4">Zarządzanie Halami</h3>
-          <form onSubmit={handleCreateHall} className="flex gap-4 mb-6">
+          {!isGuest && <form onSubmit={handleCreateHall} className="flex gap-4 mb-6">
             <input
               type="text"
               placeholder="Nazwa hali"
@@ -374,7 +390,7 @@ export default function Admin({ user }: { user: any }) {
             <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
               Dodaj Halę
             </button>
-          </form>
+          </form>}
           <ul className="divide-y divide-gray-100">
             {halls.map(hall => (
               <li key={hall.id} className="py-3 flex justify-between items-center">
@@ -388,18 +404,18 @@ export default function Admin({ user }: { user: any }) {
                   <span className={`px-2 py-1 rounded text-xs ${hall.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                     {hall.is_active ? "Aktywna" : "Nieaktywna"}
                   </span>
-                  <button 
+                  {!isGuest && <button 
                     onClick={() => setEditingHall({...hall})}
                     className="text-sm text-amber-600 hover:text-amber-800"
                   >
                     Edytuj
-                  </button>
-                  <button 
+                  </button>}
+                  {!isGuest && <button 
                     onClick={() => handleToggleHall(hall)}
                     className="text-sm text-blue-600 hover:text-blue-800"
                   >
                     {hall.is_active ? "Dezaktywuj" : "Aktywuj"}
-                  </button>
+                  </button>}
                 </div>
               </li>
             ))}
@@ -463,7 +479,7 @@ export default function Admin({ user }: { user: any }) {
         {/* Zarządzanie Użytkownikami */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-semibold mb-4">Użytkownicy</h3>
-          <form onSubmit={handleCreateUser} className="space-y-4 mb-6">
+          {!isGuest && <form onSubmit={handleCreateUser} className="space-y-4 mb-6">
             <div className="grid grid-cols-2 gap-4">
               <input
                 type="text"
@@ -534,7 +550,7 @@ export default function Admin({ user }: { user: any }) {
             <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
               Dodaj Użytkownika
             </button>
-          </form>
+          </form>}
           
           <ul className="divide-y divide-gray-100 max-h-60 overflow-y-auto">
             {users.map(u => {
@@ -575,7 +591,7 @@ export default function Admin({ user }: { user: any }) {
                       Hale
                     </button>
                   )}
-                  {u.username !== 'admin' && (
+                  {u.username !== 'admin' && !isGuest && (
                     <button
                       type="button"
                       onClick={() => setEditingUser({...u})}
@@ -585,7 +601,7 @@ export default function Admin({ user }: { user: any }) {
                       <Pencil className="w-4 h-4" />
                     </button>
                   )}
-                  {u.username !== 'admin' && (
+                  {u.username !== 'admin' && !isGuest && (
                     <button
                       type="button"
                       onClick={() => handleResetPassword(u.id)}
@@ -594,7 +610,7 @@ export default function Admin({ user }: { user: any }) {
                       Reset
                     </button>
                   )}
-                  {u.username !== 'admin' && (
+                  {u.username !== 'admin' && !isGuest && (
                     confirmingUserId === u.id ? (
                       <div className="flex items-center gap-2">
                         <button type="button" onClick={() => handleDeleteUser(u.id)} className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700">Tak, usuń</button>
@@ -686,12 +702,13 @@ export default function Admin({ user }: { user: any }) {
             <input
               type="number"
               value={settings.hours_limit_agencja}
-              onChange={e => setSettings({...settings, hours_limit_agencja: e.target.value})}
+              onChange={e => !isGuest && setSettings({...settings, hours_limit_agencja: e.target.value})}
+              readOnly={isGuest}
               className="border border-gray-300 rounded-lg px-3 py-2 w-24 text-center font-bold"
               min="0"
             />
             <span className="text-sm text-gray-500">godzin/miesiąc</span>
-            <button
+            {!isGuest && <button
               type="button"
               onClick={saveSettingsAgencja}
               disabled={savingAgencja}
@@ -702,19 +719,20 @@ export default function Admin({ user }: { user: any }) {
               }`}
             >
               {savingAgencja ? '...' : savedAgencja ? '✓ Zapisano' : 'Zapisz'}
-            </button>
+            </button>}
           </div>
           <div className="flex items-center gap-4">
             <label className="text-sm font-medium text-purple-700 min-w-[80px]">DG:</label>
             <input
               type="number"
               value={settings.hours_limit_dg}
-              onChange={e => setSettings({...settings, hours_limit_dg: e.target.value})}
+              onChange={e => !isGuest && setSettings({...settings, hours_limit_dg: e.target.value})}
+              readOnly={isGuest}
               className="border border-gray-300 rounded-lg px-3 py-2 w-24 text-center font-bold"
               min="0"
             />
             <span className="text-sm text-gray-500">godzin/miesiąc</span>
-            <button
+            {!isGuest && <button
               type="button"
               onClick={saveSettingsDG}
               disabled={savingDG}
@@ -725,21 +743,35 @@ export default function Admin({ user }: { user: any }) {
               }`}
             >
               {savingDG ? '...' : savedDG ? '✓ Zapisano' : 'Zapisz'}
-            </button>
+            </button>}
           </div>
         </div>
       </div>
 
       {/* Powiadomienia Mailowe */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="text-lg font-semibold mb-4">📧 Powiadomienia Mailowe</h3>
-        <p className="text-sm text-gray-500 mb-4">
-          Dodaj adresy email osób, które mają otrzymywać powiadomienia o przekroczeniu limitu godzin.
-          <span className="ml-1 text-amber-600 font-medium">Globalny</span> = dostaje powiadomienia ze wszystkich hal.
-          <span className="ml-1 text-teal-600 font-medium">Przypisany do admina</span> = tylko z jego hal.
-        </p>
+        <h3 className="text-lg font-semibold mb-2">📧 Powiadomienia Mailowe</h3>
+        
+        {/* Legenda typów */}
+        <div className="flex flex-wrap gap-3 mb-4 text-xs">
+          <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-full px-3 py-1">
+            <span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span>
+            <span className="font-semibold text-red-700">Przekroczenie</span>
+            <span className="text-red-500">— kierownictwo, gdy pracownik wejdzie na minus</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+            <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+            <span className="font-semibold text-amber-700">Ostrzeżenie</span>
+            <span className="text-amber-600">— nadzór, gdy zostanie &lt;20h do limitu</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-purple-50 border border-purple-200 rounded-full px-3 py-1">
+            <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>
+            <span className="font-semibold text-purple-700">Oba</span>
+            <span className="text-purple-500">— otrzymuje oba typy</span>
+          </div>
+        </div>
 
-        <div className="space-y-3 mb-5 p-4 bg-gray-50 rounded-xl border border-gray-200">
+        {!isGuest && <div className="space-y-3 mb-5 p-4 bg-gray-50 rounded-xl border border-gray-200">
           <div className="flex gap-3">
             <input
               type="email"
@@ -749,6 +781,15 @@ export default function Admin({ user }: { user: any }) {
               onKeyDown={e => e.key === 'Enter' && handleAddEmail()}
               className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm"
             />
+            <select
+              value={newEmailNotifType}
+              onChange={e => setNewEmailNotifType(e.target.value as any)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium"
+            >
+              <option value="exceeded">🔴 Przekroczenie</option>
+              <option value="warning">🟡 Ostrzeżenie</option>
+              <option value="both">🟣 Oba</option>
+            </select>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -766,10 +807,18 @@ export default function Admin({ user }: { user: any }) {
                 onChange={e => setNewEmailUserId(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[200px]"
               >
-                <option value="">Bez przypisania do admina (legacy globalny)</option>
-                {users.filter(u => u.role === 'admin' && u.username !== 'admin').map(u => (
-                  <option key={u.id} value={u.id}>{u.username} — tylko jego hale</option>
-                ))}
+                <option value="">Bez przypisania (legacy globalny)</option>
+                {users
+                  .filter(u => ['admin', 'foreman', 'mistrz'].includes(u.role) && u.username !== 'admin')
+                  .map(u => {
+                    const roleLabel = u.role === 'admin' ? 'Admin' : u.role === 'foreman' ? 'Brygadzista' : 'Mistrz';
+                    const primaryHall = halls.find(h => h.id === u.hall_id);
+                    const hallLabel = primaryHall ? primaryHall.name : 'brak hali';
+                    return (
+                      <option key={u.id} value={u.id}>{u.username} ({roleLabel}) — hala główna: {hallLabel}</option>
+                    );
+                  })
+                }
               </select>
             )}
             <button
@@ -781,37 +830,68 @@ export default function Admin({ user }: { user: any }) {
               {addingEmail ? '...' : 'Dodaj'}
             </button>
           </div>
-        </div>
+        </div>}
 
         {notificationEmails.length > 0 ? (
           <div className="space-y-2">
             {notificationEmails.map(email => {
               const assignedUser = email.user_id ? users.find(u => u.id === email.user_id) : null;
               const hallsForUser = email.user_id ? (db_userHalls[email.user_id] || []).map((hid: number) => halls.find(h => h.id === hid)?.name).filter(Boolean) : [];
+              const notifType = email.notification_type || 'exceeded';
+              const notifColors: Record<string, string> = {
+                exceeded: 'bg-red-50 border-red-200 text-red-700',
+                warning: 'bg-amber-50 border-amber-200 text-amber-700',
+                both: 'bg-purple-50 border-purple-200 text-purple-700'
+              };
+              const notifLabel: Record<string, string> = {
+                exceeded: '🔴 Przekroczenie',
+                warning: '🟡 Ostrzeżenie',
+                both: '🟣 Oba'
+              };
               return (
                 <div key={email.id} className={`flex items-center justify-between px-4 py-3 rounded-lg border ${
                   email.is_global ? 'bg-amber-50 border-amber-200' : assignedUser ? 'bg-teal-50 border-teal-200' : 'bg-gray-50 border-gray-200'
                 }`}>
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <span className="text-lg">{email.is_global ? '🌐' : assignedUser ? '👤' : '📧'}</span>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-gray-800 truncate">{email.email}</p>
                       {email.is_global && <p className="text-xs text-amber-600 font-medium">Globalny — wszystkie hale</p>}
-                      {!email.is_global && assignedUser && (
-                        <p className="text-xs text-teal-600">
-                          Admin: <span className="font-semibold">{assignedUser.username}</span>
-                          {hallsForUser.length > 0 ? ` — ${hallsForUser.join(', ')}` : ' — brak przypisanych hal'}
-                        </p>
-                      )}
+                      {!email.is_global && assignedUser && (() => {
+                        const roleLabel = assignedUser.role === 'admin' ? 'Admin' : assignedUser.role === 'foreman' ? 'Brygadzista' : assignedUser.role === 'mistrz' ? 'Mistrz' : assignedUser.role;
+                        const primaryHall = halls.find(h => h.id === assignedUser.hall_id);
+                        return (
+                          <p className="text-xs text-teal-600">
+                            {roleLabel}: <span className="font-semibold">{assignedUser.username}</span>
+                            {primaryHall ? ` — hala główna: ${primaryHall.name}` : ' — brak hali głównej'}
+                          </p>
+                        );
+                      })()}
                       {!email.is_global && !assignedUser && <p className="text-xs text-gray-400">Legacy — wszystkie hale</p>}
                     </div>
+                    {/* Typ powiadomienia — select inline */}
+                    {!isGuest ? (
+                      <select
+                        value={notifType}
+                        onChange={e => handleChangeNotifType(email.id, e.target.value)}
+                        className={`text-xs font-semibold rounded-full px-3 py-1 border cursor-pointer ${notifColors[notifType]}`}
+                      >
+                        <option value="exceeded">🔴 Przekroczenie</option>
+                        <option value="warning">🟡 Ostrzeżenie</option>
+                        <option value="both">🟣 Oba</option>
+                      </select>
+                    ) : (
+                      <span className={`text-xs font-semibold rounded-full px-3 py-1 border ${notifColors[notifType]}`}>
+                        {notifLabel[notifType]}
+                      </span>
+                    )}
                   </div>
-                  <button
+                  {!isGuest && <button
                     onClick={() => handleDeleteEmail(email.id)}
                     className="text-red-500 hover:text-red-700 text-sm font-medium ml-3 shrink-0"
                   >
                     Usuń
-                  </button>
+                  </button>}
                 </div>
               );
             })}
@@ -834,7 +914,7 @@ export default function Admin({ user }: { user: any }) {
         )}
 
         {/* Formularz dodawania */}
-        <form
+        {!isGuest && <form
           onSubmit={async e => {
             e.preventDefault();
             setQualError(null);
@@ -897,7 +977,7 @@ export default function Admin({ user }: { user: any }) {
               <span className="text-xs text-orange-700 font-medium">Z potrąceniem (-0.5h/dzień obecności)</span>
             </label>
           </div>
-        </form>
+        </form>}
 
         {/* Lista kwalifikacji */}
         {qualificationsList.length === 0 ? (
@@ -923,6 +1003,7 @@ export default function Admin({ user }: { user: any }) {
                   }}
                   className="w-4 h-4 rounded-full bg-teal-200 hover:bg-red-400 text-teal-700 hover:text-white flex items-center justify-center transition-colors text-xs font-bold leading-none"
                   title="Usuń kwalifikację"
+                  style={{display: isGuest ? 'none' : undefined}}
                 >×</button>
               </div>
             ))}
@@ -933,7 +1014,7 @@ export default function Admin({ user }: { user: any }) {
       {/* Zarządzanie Pracownikami */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
         <h3 className="text-lg font-semibold mb-4">Baza Pracowników</h3>
-        <form onSubmit={handleCreateEmployee} className="space-y-4 mb-6">
+        {!isGuest && <form onSubmit={handleCreateEmployee} className="space-y-4 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <input
               type="text"
@@ -1035,7 +1116,7 @@ export default function Admin({ user }: { user: any }) {
           <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
             Dodaj Pracownika
           </button>
-        </form>
+        </form>}
 
         {/* Filtry */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
@@ -1122,7 +1203,7 @@ export default function Admin({ user }: { user: any }) {
                     {halls.find(h => h.id === emp.hall_id)?.name || `Hala ID: ${emp.hall_id}`}
                   </td>
                   <td className="p-3 text-right">
-                    {confirmingEmployeeId === emp.id ? (
+                    {!isGuest && (confirmingEmployeeId === emp.id ? (
                       <div className="flex items-center justify-end gap-2">
                         <button 
                           type="button"
@@ -1147,7 +1228,7 @@ export default function Admin({ user }: { user: any }) {
                       >
                         Usuń
                       </button>
-                    )}
+                    ))}
                   </td>
                 </tr>
               ))}
@@ -1215,14 +1296,14 @@ export default function Admin({ user }: { user: any }) {
             <Database className="w-5 h-5 text-emerald-600" />
             <h3 className="text-lg font-semibold">Kopie Zapasowe Bazy Danych</h3>
           </div>
-          <button
+          {!isGuest && <button
             onClick={handleCreateBackup}
             disabled={backupLoading}
             className="flex items-center gap-2 text-sm font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${backupLoading ? 'animate-spin' : ''}`} />
             {backupLoading ? 'Tworzenie...' : 'Utwórz Backup'}
-          </button>
+          </button>}
         </div>
         <p className="text-sm text-gray-500 mb-4">
           Automatyczny backup co 24h. Przechowywane ostatnie 7 kopii. Folder: <code className="bg-gray-100 px-1 rounded">backups/</code>

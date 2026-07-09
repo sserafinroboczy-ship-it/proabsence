@@ -53,11 +53,11 @@ export default function Layout({ user, onLogout, onShowAbout }: { user: any; onL
   }, []);
 
   const navItems = [
-    { name: "Dashboard", path: "/", icon: LayoutDashboard, hidden: user.role !== "admin" },
-    { name: "Wprowadzanie Danych", path: "/foreman", icon: ClipboardList, hidden: user.role === "guest" },
+    { name: "Dashboard", path: "/", icon: LayoutDashboard, hidden: user.role !== "admin" && user.role !== "guest" },
+    { name: "Wprowadzanie Danych", path: "/foreman", icon: ClipboardList },
     { name: "Kalendarz", path: "/calendar", icon: Calendar },
     { name: "Czat", path: "/chat", icon: MessageCircle },
-    { name: "Panel Admina", path: "/admin", icon: Users, hidden: user.role !== "admin" },
+    { name: "Panel Admina", path: "/admin", icon: Users, hidden: user.role !== "admin" && user.role !== "guest" },
   ].filter((item) => !item.hidden);
 
   return (

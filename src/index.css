@@ -189,6 +189,34 @@
   border-spacing: 0;
 }
 
+/* Sticky header row - przyklejony nagłówek tabeli obecności */
+.attendance-table thead tr {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.attendance-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+/* Sticky kolumny w nagłówku muszą mieć wyższy z-index niż sticky kolumny w body */
+.attendance-table thead th[class*="sticky-col"] {
+  z-index: 40;
+}
+
+/* Wrapper tabeli - scroll pionowy i poziomy
+   Layout: header(60px) + padding(64px) + pasek_statystyk(52px) + naglowek_karty(80px) + legenda(44px) = ~300px
+   Dodajemy margines 60px = 360px łącznie */
+.attendance-table-wrapper {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: calc(100vh - 360px);
+  min-height: 200px;
+}
+
 .attendance-table td,
 .attendance-table th {
   border-right: 1px solid #e5e7eb;

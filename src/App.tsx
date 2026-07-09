@@ -53,12 +53,12 @@ export default function App() {
           
           {user ? (
             <Route element={<Layout user={user} onLogout={() => { sessionStorage.removeItem("token"); setUser(null); }} onShowAbout={() => setShowAbout(true)} />}>
-              {user.role === "admin" && <Route path="/" element={<Dashboard />} />}
+              {(user.role === "admin" || user.role === "guest") && <Route path="/" element={<Dashboard />} />}
               <Route path="/foreman" element={<Foreman user={user} />} />
               <Route path="/calendar" element={<CalendarView user={user} />} />
               <Route path="/chat" element={<Chat user={user} />} />
-              {user.role === "admin" && <Route path="/admin" element={<Admin user={user} />} />}
-              <Route path="*" element={<Navigate to={user.role === "admin" ? "/" : "/foreman"} />} />
+              {(user.role === "admin" || user.role === "guest") && <Route path="/admin" element={<Admin user={user} />} />}
+              <Route path="*" element={<Navigate to={(user.role === "admin" || user.role === "guest") ? "/" : "/foreman"} />} />
             </Route>
           ) : (
             <Route path="*" element={<Navigate to="/login" />} />

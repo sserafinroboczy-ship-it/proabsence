@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fetchApi } from "../lib/api";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isSameDay } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isSameDay, isAfter, startOfDay } from "date-fns";
 import { pl } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from "recharts";
 import * as XLSX from "xlsx";
-import { Plus, Trash2, UserPlus, X, ArrowLeftRight, ArrowRightLeft, Pencil, Check } from "lucide-react";
+import { Plus, Trash2, UserPlus, X, ArrowLeftRight, ArrowRightLeft, Pencil, Check, Search } from "lucide-react";
 
 // Algorytm obliczania daty Wielkanocy (Meeus/Jones/Butcher)
 const getEasterDate = (year: number): Date => {
@@ -86,6 +86,7 @@ const isHoliday = (date: Date) => {
 const isFreeDay = (date: Date) => isWeekend(date) || isHoliday(date);
 
 export default function Foreman({ user }: { user: any }) {
+  const isGuest = user?.role === 'guest';
   const [halls, setHalls] = useState<any[]>([]);
   const [activeHallId, setActiveHallId] = useState<number | null>(null);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -116,6 +117,8 @@ export default function Foreman({ user }: { user: any }) {
   const [commentModal, setCommentModal] = useState<{ empId: number; date: string; empName: string; hours: number } | null>(null);
   const [commentText, setCommentText] = useState("");
   const [savingComment, setSavingComment] = useState(false);
+  const [employeeFilter, setEmployeeFilter] = useState("");
+  const [employeeTransfers, setEmployeeTransfers] = useState<any[]>([]); // historia przeniesień dla aktywnej hali
 
   useEffect(() => {
     fetchApi("/api/qualifications").then(setQualificationsList).catch(() => {});
@@ -154,6 +157,15 @@ export default function Foreman({ user }: { user: any }) {
     }
   };
 
+  const loadEmployeeTransfers = async () => {
+    if (activeHallId) {
+      try {
+        const data = await fetchApi(`/api/employee-transfers?hall_id=${activeHallId}`);
+        setEmployeeTransfers(data);
+      } catch {}
+    }
+  };
+
   const loadDayComments = async () => {
     if (activeHallId) {
       try {
@@ -185,7 +197,7 @@ export default function Foreman({ user }: { user: any }) {
 
   useEffect(() => {
     if (activeHallId) {
-      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+      fetchApi(`/api/employees?hall_id=${activeHallId}&month=${selectedMonth}`).then(setEmployees);
       loadAbsences();
       // Przywróć pozycję scrolla dla tej hali
       setTimeout(() => {
@@ -197,11 +209,13 @@ export default function Foreman({ user }: { user: any }) {
       setEmployees([]);
       setAbsences([]);
       setDayComments({});
+      setEmployeeTransfers([]);
     }
   }, [activeHallId, selectedMonth]);
 
   useEffect(() => {
     loadDayComments();
+    loadEmployeeTransfers();
   }, [activeHallId, selectedMonth]);
 
   // Synchronizacja scrollowania między tabelą a sticky scrollbar
@@ -386,8 +400,9 @@ export default function Foreman({ user }: { user: any }) {
         const empAbsences = newAbsences.filter(a => a.employee_id === employeeId && a.type === 'present');
         const totalHours = empAbsences.reduce((sum, a) => sum + (a.working_hours || 0) + (a.overtime_hours || 0), 0);
         
-        if (totalHours > hoursLimit) {
-          // Wyślij powiadomienie o przekroczeniu limitu
+        const remaining = hoursLimit - totalHours;
+        if (remaining <= 20) {
+          // Wyślij powiadomienie: warning (0 < remaining <= 20) lub exceeded (remaining <= 0)
           fetchApi("/api/check-limit-notifications", {
             method: "POST",
             body: JSON.stringify({
@@ -420,7 +435,7 @@ export default function Foreman({ user }: { user: any }) {
       });
       setIsAddingEmployee(false);
       setNewEmployee({ first_name: "", last_name: "", position: "", employee_number: "", employment_type: "Etat", qualifications: "" });
-      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+      fetchApi(`/api/employees?hall_id=${activeHallId}&month=${selectedMonth}`).then(setEmployees);
     } catch (err: any) {
       setError(err.message || "Błąd dodawania pracownika");
     }
@@ -454,7 +469,9 @@ export default function Foreman({ user }: { user: any }) {
         })
       });
       setEditingEmployee(null);
-      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+      fetchApi(`/api/employees?hall_id=${activeHallId}&month=${selectedMonth}`).then(setEmployees);
+      loadAbsences();
+      loadEmployeeTransfers();
     } catch (err: any) {
       setError(err.message || "Błąd edycji pracownika");
     }
@@ -477,12 +494,12 @@ export default function Foreman({ user }: { user: any }) {
         })
       });
       
-      // Usuń pracownika z aktualnej listy (został przeniesiony)
-      setEmployees(employees.filter(e => e.id !== empId));
       setTransferringEmployeeId(null);
       
-      // Odśwież dane nieobecności
+      // Odśwież wszystko — pracownik nadal widoczny na tej hali (zablokowany)
+      fetchApi(`/api/employees?hall_id=${activeHallId}&month=${selectedMonth}`).then(setEmployees);
       loadAbsences();
+      loadEmployeeTransfers();
     } catch (err: any) {
       setError(err.message || "Błąd przenoszenia pracownika");
     }
@@ -506,7 +523,7 @@ export default function Foreman({ user }: { user: any }) {
     try {
       await fetchApi(`/api/halls/${activeHallId}/rotate-shifts`, { method: "POST" });
       // Odśwież listę pracowników
-      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+      fetchApi(`/api/employees?hall_id=${activeHallId}&month=${selectedMonth}`).then(setEmployees);
     } catch (err: any) {
       setError(err.message || "Błąd rotacji zmian");
     }
@@ -588,7 +605,7 @@ export default function Foreman({ user }: { user: any }) {
     } catch (err: any) {
       console.error('Błąd zapisywania kolejności:', err);
       // Przywróć poprzednią kolejność w razie błędu
-      fetchApi(`/api/employees?hall_id=${activeHallId}`).then(setEmployees);
+      fetchApi(`/api/employees?hall_id=${activeHallId}&month=${selectedMonth}`).then(setEmployees);
     }
 
     setDraggedEmployeeId(null);
@@ -599,12 +616,28 @@ export default function Foreman({ user }: { user: any }) {
   // Liczba zmian dla aktywnej hali
   const shiftCount = activeHall?.shift_count || 2;
 
-  if (user.role === "guest") return <div className="p-8 text-gray-500">Brak dostępu</div>;
 
   const daysInMonth = eachDayOfInterval({
     start: startOfMonth(new Date(selectedMonth)),
     end: endOfMonth(new Date(selectedMonth))
   });
+
+  // Zwraca zakres dat { from, to } dla pracownika na aktualnej hali (na podstawie employee_transfers)
+  const getTransferRange = (empId: number): { from: string; to: string | null } | null => {
+    const transfers = employeeTransfers.filter(t => t.employee_id === empId);
+    if (transfers.length === 0) return null;
+    const last = transfers[transfers.length - 1];
+    return { from: last.from_date, to: last.to_date };
+  };
+
+  // Sprawdza czy dana data jest w zakresie przynależności pracownika do aktualnej hali
+  const isDateInTransferRange = (empId: number, dateStr: string): boolean => {
+    const range = getTransferRange(empId);
+    if (!range) return true;
+    if (dateStr < range.from) return false;
+    if (range.to !== null && dateStr >= range.to) return false;
+    return true;
+  };
 
   // Calculate summary for the whole month (tylko pracownicy produkcyjni, bez nadzoru)
   let totalVacation = 0;
@@ -621,13 +654,20 @@ export default function Foreman({ user }: { user: any }) {
   // Liczymy tylko dni robocze (pon-pt, bez świąt) do frekwencji
   // Tylko pracownicy produkcyjni (bez nadzoru)
   const productionEmployees = employees.filter(e => !e.is_supervisor);
-  const workingDaysCount = daysInMonth.filter(d => !isFreeDay(d)).length;
-  let totalExpectedDays = productionEmployees.length * workingDaysCount;
+  // Oczekiwane dni robocze — dla każdego pracownika tylko dni w jego zakresie transferu
+  let totalExpectedDays = 0;
+  productionEmployees.forEach(emp => {
+    daysInMonth.forEach(day => {
+      if (!isFreeDay(day) && isDateInTransferRange(emp.id, format(day, "yyyy-MM-dd"))) {
+        totalExpectedDays++;
+      }
+    });
+  });
 
   // Filtruj absences tylko dla pracowników produkcyjnych
   const productionEmployeeIds = new Set(productionEmployees.map(e => e.id));
   
-  absences.filter(a => productionEmployeeIds.has(a.employee_id)).forEach(a => {
+  absences.filter(a => productionEmployeeIds.has(a.employee_id) && isDateInTransferRange(a.employee_id, a.date)).forEach(a => {
     if (a.type === "vacation") totalVacation++;
     else if (a.type === "sick") totalSick++;
     else if (a.type === "unplanned") totalUnplanned++;
@@ -726,7 +766,7 @@ export default function Foreman({ user }: { user: any }) {
         row[format(day, "dd.MM")] = val;
         
         const absence = absences.find(a => a.employee_id === emp.id && a.date === dateStr);
-        if (absence) {
+        if (absence && isDateInTransferRange(emp.id, dateStr)) {
           if (absence.type === "present") {
             const wh = absence.working_hours || 0;
             const oh = absence.overtime_hours || 0;
@@ -840,14 +880,29 @@ export default function Foreman({ user }: { user: any }) {
         </div>
       )}
 
-      <div ref={tableCardRef} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div ref={tableCardRef} className="bg-white rounded-xl shadow-sm border border-gray-100">
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50 gap-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-800">Karta Obecności</h3>
             <p className="text-sm text-gray-500">Wpisz godziny (np. 8, 10) lub status</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            {shiftCount > 1 && (
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Szukaj pracownika..."
+                value={employeeFilter}
+                onChange={e => setEmployeeFilter(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 w-44"
+              />
+              {employeeFilter && (
+                <button onClick={() => setEmployeeFilter("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {shiftCount > 1 && !isGuest && (
               <button
                 onClick={handleRotateShifts}
                 className="flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700 bg-indigo-100 hover:bg-indigo-200 px-3 py-1.5 rounded-md transition-colors"
@@ -859,13 +914,15 @@ export default function Foreman({ user }: { user: any }) {
                 Rotuj zmiany
               </button>
             )}
-            <button
-              onClick={() => setIsAddingEmployee(true)}
-              className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
-            >
-              <UserPlus className="w-4 h-4" />
-              Dodaj pracownika
-            </button>
+            {!isGuest && (
+              <button
+                onClick={() => setIsAddingEmployee(true)}
+                className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
+              >
+                <UserPlus className="w-4 h-4" />
+                Dodaj pracownika
+              </button>
+            )}
             <div className="w-px h-6 bg-gray-200 hidden md:block"></div>
             <div className="flex items-center gap-4 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
               <button
@@ -900,7 +957,7 @@ export default function Foreman({ user }: { user: any }) {
           </div>
         </div>
 
-        <div ref={tableScrollRef} className={`overflow-x-auto overflow-y-hidden ${showFixedScrollbar ? 'hide-native-scrollbar' : ''}`}>
+        <div ref={tableScrollRef} className={`attendance-table-wrapper ${showFixedScrollbar ? 'hide-native-scrollbar' : ''}`}>
           <table className="w-full text-left text-sm attendance-table">
             <thead>
               <tr className="bg-gray-100 text-gray-600 border-b border-gray-200">
@@ -943,8 +1000,8 @@ export default function Foreman({ user }: { user: any }) {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {/* Sekcja: Pracownicy produkcyjni */}
-              {employees.filter(e => !e.is_supervisor).map(emp => {
-                const empAbsences = absences.filter(a => a.employee_id === emp.id);
+              {employees.filter(e => !e.is_supervisor).filter(e => !employeeFilter || `${e.first_name} ${e.last_name}`.toLowerCase().includes(employeeFilter.toLowerCase()) || (e.employee_number || '').toLowerCase().includes(employeeFilter.toLowerCase())).map(emp => {
+                const empAbsences = absences.filter(a => a.employee_id === emp.id && isDateInTransferRange(emp.id, a.date));
                 const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
                 
                 // Dla Agencja/DG: nadgodziny doliczane do godzin, nie do nadgodzin
@@ -972,21 +1029,22 @@ export default function Foreman({ user }: { user: any }) {
                 return (
                   <tr 
                     key={emp.id} 
-                    className={`group hover:bg-gray-50 transition-colors cursor-grab active:cursor-grabbing ${
+                    className={`group hover:bg-gray-50 transition-colors ${!isGuest ? 'cursor-grab active:cursor-grabbing' : ''} ${
                       dragOverEmployeeId === emp.id ? 'bg-blue-100 border-t-2 border-blue-500' : ''
                     } ${draggedEmployeeId === emp.id ? 'opacity-50' : ''}`}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, emp.id)}
-                    onDragEnd={handleDragEnd}
-                    onDragOver={(e) => handleDragOver(e, emp.id)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, emp.id)}
+                    draggable={!isGuest}
+                    onDragStart={(e) => !isGuest && handleDragStart(e, emp.id)}
+                    onDragEnd={!isGuest ? handleDragEnd : undefined}
+                    onDragOver={(e) => !isGuest && handleDragOver(e, emp.id)}
+                    onDragLeave={!isGuest ? handleDragLeave : undefined}
+                    onDrop={(e) => !isGuest && handleDrop(e, emp.id)}
                   >
                     {shiftCount > 1 && (
                       <td className="p-1 text-center min-w-[40px] w-[40px] sticky-col-shift group-hover:!bg-gray-50">
                         <select
                           value={emp.shift || 1}
-                          onChange={(e) => handleChangeShift(emp.id, parseInt(e.target.value))}
+                          onChange={(e) => !isGuest && handleChangeShift(emp.id, parseInt(e.target.value))}
+                          disabled={isGuest}
                           className={`text-xs font-bold px-1 py-0.5 rounded-full border-0 cursor-pointer ${
                             (emp.shift || 1) === 1 ? 'bg-blue-100 text-blue-700' :
                             (emp.shift || 1) === 2 ? 'bg-green-100 text-green-700' :
@@ -1025,27 +1083,27 @@ export default function Foreman({ user }: { user: any }) {
                       </span>
                     </td>
                     <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-edit-shifted' : 'sticky-col-edit'} group-hover:!bg-gray-50`}>
-                      <button 
+                      {!isGuest && <button 
                         type="button"
                         onClick={() => setEditingEmployee({...emp})}
                         className="text-amber-500 hover:text-amber-700 p-1 cursor-pointer"
                         title="Edytuj pracownika"
                       >
                         <Pencil className="w-4 h-4" />
-                      </button>
+                      </button>}
                     </td>
                     <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-3-shifted' : 'sticky-col-3'} group-hover:!bg-gray-50`}>
-                      <button 
+                      {!isGuest && <button 
                         type="button"
                         onClick={() => setTransferringEmployeeId(emp.id)}
                         className="text-blue-400 hover:text-blue-600 p-1 cursor-pointer"
                         title="Przesuń na inną halę"
                       >
                         <ArrowLeftRight className="w-4 h-4" />
-                      </button>
+                      </button>}
                     </td>
                     <td className={`p-1 text-center min-w-[50px] w-[50px] ${shiftCount > 1 ? 'sticky-col-4-shifted' : 'sticky-col-4'} group-hover:!bg-gray-50`}>
-                      {confirmingDeleteId === emp.id ? (
+                      {!isGuest && (confirmingDeleteId === emp.id ? (
                         <div className="flex flex-col items-center gap-1 p-0.5">
                           <button 
                             type="button"
@@ -1071,7 +1129,7 @@ export default function Foreman({ user }: { user: any }) {
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
-                      )}
+                      ))}
                     </td>
                     {daysInMonth.map(day => {
                       const dateStr = format(day, "yyyy-MM-dd");
@@ -1082,24 +1140,34 @@ export default function Foreman({ user }: { user: any }) {
                       const commentKey = `${emp.id}_${dateStr}`;
                       const hasComment = !!dayComments[commentKey];
 
-                      // Podświetl gdy: Etat, dzień roboczy, wpisano liczbę < 8
+                      // Podświetl gdy: Etat, dzień roboczy (nie w przyszłości), wpisano liczbę < 8 LUB pole puste/0 bez statusu z legendy
                       const numVal = parseFloat(val);
-                      const isShortHours = !isWknd && emp.employment_type === 'Etat' && val && !isNaN(numVal) && numVal > 0 && numVal < 8;
+                      const legendStatuses = ['uw','ch','nż','nz','bl','op','kr','krew'];
+                      const hasLegendStatus = legendStatuses.includes(val);
+                      const isNotFuture = !isAfter(startOfDay(day), startOfDay(new Date()));
+                      const isShortHours = !isWknd && isNotFuture && emp.employment_type === 'Etat' && (
+                        (val && !isNaN(numVal) && numVal > 0 && numVal < 8) ||
+                        (!hasLegendStatus && (val === '' || (!isNaN(numVal) && numVal === 0)))
+                      );
+
+                      // Blokada transferu: komórka zablokowana jeśli dzień poza zakresem przynależności do tej hali
+                      const isTransferLocked = !isDateInTransferRange(emp.id, dateStr);
 
                       return (
                         <td
                           key={dateStr}
-                          className={`p-0 border-r relative ${isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${isToday && !val ? 'bg-yellow-50' : ''} ${isShortHours && hasComment ? 'cell-short-hours-commented' : ''} ${isShortHours && !hasComment ? 'cell-short-hours' : ''}`}
-                          title={isShortHours && hasComment ? `Komentarz: ${dayComments[commentKey]}` : isShortHours ? 'Kliknij prawym przyciskiem aby dodać komentarz' : undefined}
+                          className={`p-0 border-r relative ${isTransferLocked ? 'bg-gray-100 border-gray-300' : isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${!isTransferLocked && isToday && !val ? 'bg-yellow-50' : ''} ${!isTransferLocked && isShortHours && hasComment ? 'cell-short-hours-commented' : ''} ${!isTransferLocked && isShortHours && !hasComment ? 'cell-short-hours' : ''}`}
+                          title={isTransferLocked ? 'Pracownik był na innej hali w tym dniu' : isShortHours && hasComment ? `Komentarz: ${dayComments[commentKey]}` : isShortHours ? 'Kliknij aby dodać komentarz' : undefined}
                         >
                           <input
                             key={val}
                             type="text"
                             data-row={emp.id}
                             data-col={dateStr}
-                            defaultValue={val}
+                            defaultValue={isTransferLocked ? '' : val}
+                            readOnly={isGuest || isTransferLocked}
                             onBlur={(e) => {
-                              if (e.target.value !== val) {
+                              if (!isGuest && e.target.value !== val) {
                                 handleCellChange(emp.id, dateStr, e.target.value);
                               }
                             }}
@@ -1112,32 +1180,46 @@ export default function Foreman({ user }: { user: any }) {
                               const currentIndex = allInputs.indexOf(currentInput);
                               const numCols = daysInMonth.length;
                               
+                              // Pomocnik: sprawdza czy input jest w kolumnie kalendarza (ma datę w data-col)
+                              const isCalendarInput = (inp: HTMLInputElement) => /^\d{4}-\d{2}-\d{2}$/.test(inp.dataset.col || '');
+                              
+                              // Pomocnik: zapisuje bieżącą komórkę jeśli zmieniona
+                              const saveIfChanged = () => {
+                                if (!isGuest && currentInput.value !== val) {
+                                  handleCellChange(emp.id, dateStr, currentInput.value);
+                                }
+                              };
+                              
                               let nextInput: HTMLInputElement | null = null;
                               
                               if (e.key === 'Enter' || e.key === 'ArrowDown') {
                                 e.preventDefault();
-                                if (currentInput.value !== val) {
-                                  handleCellChange(emp.id, dateStr, currentInput.value);
-                                }
+                                saveIfChanged();
                                 nextInput = allInputs[currentIndex + numCols] || null;
                               } else if (e.key === 'ArrowUp') {
                                 e.preventDefault();
+                                saveIfChanged();
                                 nextInput = allInputs[currentIndex - numCols] || null;
                               } else if (e.key === 'ArrowRight') {
                                 e.preventDefault();
-                                nextInput = allInputs[currentIndex + 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex + 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               } else if (e.key === 'ArrowLeft') {
                                 e.preventDefault();
-                                nextInput = allInputs[currentIndex - 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex - 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               } else if (e.key === 'Tab' && !e.shiftKey) {
                                 e.preventDefault();
-                                if (currentInput.value !== val) {
-                                  handleCellChange(emp.id, dateStr, currentInput.value);
-                                }
-                                nextInput = allInputs[currentIndex + 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex + 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               } else if (e.key === 'Tab' && e.shiftKey) {
                                 e.preventDefault();
-                                nextInput = allInputs[currentIndex - 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex - 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               }
                               
                               if (nextInput) {
@@ -1145,9 +1227,9 @@ export default function Foreman({ user }: { user: any }) {
                                 nextInput.select();
                               }
                             }}
-                            className={`w-full h-full min-h-[36px] text-center text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-colors ${colorClass} ${isWknd && !val ? 'bg-red-50' : ''} ${isToday && !val ? 'bg-yellow-50' : ''}`}
+                            className={`w-full h-full min-h-[36px] text-center text-xs outline-none transition-colors ${isTransferLocked ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : `focus:bg-blue-200 focus:text-blue-900 ${colorClass} ${isWknd && !val ? 'bg-red-50' : ''} ${isToday && !val ? 'bg-yellow-50' : ''}`}`}
                           />
-                          {isShortHours && (
+                          {!isTransferLocked && isShortHours && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1202,30 +1284,30 @@ export default function Foreman({ user }: { user: any }) {
                   </tr>
                 );
               })}
-              {employees.filter(e => !e.is_supervisor).length === 0 && (
+              {employees.filter(e => !e.is_supervisor).filter(e => !employeeFilter || `${e.first_name} ${e.last_name}`.toLowerCase().includes(employeeFilter.toLowerCase()) || (e.employee_number || '').toLowerCase().includes(employeeFilter.toLowerCase())).length === 0 && (
                 <tr>
                   <td colSpan={daysInMonth.length + 14} className="p-8 text-center text-gray-500">
-                    {activeHallId ? "Brak pracowników produkcyjnych przypisanych do tej hali." : "Wybierz halę, aby zobaczyć pracowników."}
+                    {employeeFilter ? `Brak wyników dla "${employeeFilter}"` : activeHallId ? "Brak pracowników produkcyjnych przypisanych do tej hali." : "Wybierz halę, aby zobaczyć pracowników."}
                   </td>
                 </tr>
               )}
               
               {/* Sekcja: Nadzór (Mistrzowie, Brygadziści) */}
-              {employees.filter(e => e.is_supervisor).length > 0 && (
+              {employees.filter(e => e.is_supervisor).filter(e => !employeeFilter || `${e.first_name} ${e.last_name}`.toLowerCase().includes(employeeFilter.toLowerCase()) || (e.employee_number || '').toLowerCase().includes(employeeFilter.toLowerCase())).length > 0 && (
                 <tr className="bg-indigo-100 border-t-4 border-indigo-300">
                   <td colSpan={daysInMonth.length + 14} className="p-3 text-center">
                     <span className="text-indigo-800 font-bold text-sm flex items-center justify-center gap-2">
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                       </svg>
-                      NADZÓR ({employees.filter(e => e.is_supervisor).length})
+                      NADZÓR ({employees.filter(e => e.is_supervisor).filter(e => !employeeFilter || `${e.first_name} ${e.last_name}`.toLowerCase().includes(employeeFilter.toLowerCase()) || (e.employee_number || '').toLowerCase().includes(employeeFilter.toLowerCase())).length})
                       <span className="text-xs font-normal text-indigo-600 ml-2">(godziny nie wliczane do statystyk hali)</span>
                     </span>
                   </td>
                 </tr>
               )}
-              {employees.filter(e => e.is_supervisor).map(emp => {
-                const empAbsences = absences.filter(a => a.employee_id === emp.id);
+              {employees.filter(e => e.is_supervisor).filter(e => !employeeFilter || `${e.first_name} ${e.last_name}`.toLowerCase().includes(employeeFilter.toLowerCase()) || (e.employee_number || '').toLowerCase().includes(employeeFilter.toLowerCase())).map(emp => {
+                const empAbsences = absences.filter(a => a.employee_id === emp.id && isDateInTransferRange(emp.id, a.date));
                 const isAgencyOrDG = emp.employment_type === 'Agencja' || emp.employment_type === 'DG';
                 
                 // Dla Agencja/DG: nadgodziny doliczane do godzin, nie do nadgodzin
@@ -1252,21 +1334,22 @@ export default function Foreman({ user }: { user: any }) {
                 return (
                   <tr 
                     key={emp.id} 
-                    className={`group hover:bg-indigo-50 transition-colors cursor-grab active:cursor-grabbing bg-indigo-50/30 ${
+                    className={`group hover:bg-indigo-50 transition-colors ${!isGuest ? 'cursor-grab active:cursor-grabbing' : ''} bg-indigo-50/30 ${
                       dragOverEmployeeId === emp.id ? 'bg-blue-100 border-t-2 border-blue-500' : ''
                     } ${draggedEmployeeId === emp.id ? 'opacity-50' : ''}`}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, emp.id)}
-                    onDragEnd={handleDragEnd}
-                    onDragOver={(e) => handleDragOver(e, emp.id)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, emp.id)}
+                    draggable={!isGuest}
+                    onDragStart={(e) => !isGuest && handleDragStart(e, emp.id)}
+                    onDragEnd={!isGuest ? handleDragEnd : undefined}
+                    onDragOver={(e) => !isGuest && handleDragOver(e, emp.id)}
+                    onDragLeave={!isGuest ? handleDragLeave : undefined}
+                    onDrop={(e) => !isGuest && handleDrop(e, emp.id)}
                   >
                     {shiftCount > 1 && (
                       <td className="p-1 text-center min-w-[40px] w-[40px] sticky-col-shift group-hover:!bg-indigo-50">
                         <select
                           value={emp.shift || 1}
-                          onChange={(e) => handleChangeShift(emp.id, parseInt(e.target.value))}
+                          onChange={(e) => !isGuest && handleChangeShift(emp.id, parseInt(e.target.value))}
+                          disabled={isGuest}
                           className={`text-xs font-bold px-1 py-0.5 rounded-full border-0 cursor-pointer ${
                             (emp.shift || 1) === 1 ? 'bg-blue-100 text-blue-700' :
                             (emp.shift || 1) === 2 ? 'bg-green-100 text-green-700' :
@@ -1305,25 +1388,25 @@ export default function Foreman({ user }: { user: any }) {
                       </span>
                     </td>
                     <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-edit-shifted' : 'sticky-col-edit'} group-hover:!bg-indigo-50`}>
-                      <button
+                      {!isGuest && <button
                         onClick={() => setEditingEmployee(emp)}
                         className="text-amber-600 hover:text-amber-700 hover:bg-amber-100 p-1 rounded transition-colors"
                         title="Edytuj pracownika"
                       >
                         <Pencil className="w-4 h-4" />
-                      </button>
+                      </button>}
                     </td>
                     <td className={`p-1 text-center min-w-[40px] w-[40px] ${shiftCount > 1 ? 'sticky-col-3-shifted' : 'sticky-col-3'} group-hover:!bg-indigo-50`}>
-                      <button
+                      {!isGuest && <button
                         onClick={() => setTransferringEmployeeId(emp.id)}
                         className="text-blue-600 hover:text-blue-700 hover:bg-blue-100 p-1 rounded transition-colors"
                         title="Przenieś na inną halę"
                       >
                         <ArrowRightLeft className="w-4 h-4" />
-                      </button>
+                      </button>}
                     </td>
                     <td className={`p-1 text-center min-w-[50px] w-[50px] ${shiftCount > 1 ? 'sticky-col-4-shifted' : 'sticky-col-4'} group-hover:!bg-indigo-50`}>
-                      {confirmingDeleteId === emp.id ? (
+                      {!isGuest && (confirmingDeleteId === emp.id ? (
                         <div className="flex gap-1 justify-center">
                           <button
                             onClick={() => handleDeleteEmployee(emp.id)}
@@ -1348,7 +1431,7 @@ export default function Foreman({ user }: { user: any }) {
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
-                      )}
+                      ))}
                     </td>
                     {daysInMonth.map(day => {
                       const dateStr = format(day, "yyyy-MM-dd");
@@ -1359,24 +1442,34 @@ export default function Foreman({ user }: { user: any }) {
                       const commentKey = `${emp.id}_${dateStr}`;
                       const hasComment = !!dayComments[commentKey];
 
-                      // Podświetl gdy: Etat, dzień roboczy, wpisano liczbę < 8
+                      // Podświetl gdy: Etat, dzień roboczy (nie w przyszłości), wpisano liczbę < 8 LUB pole puste/0 bez statusu z legendy
                       const numVal = parseFloat(val);
-                      const isShortHours = !isWknd && emp.employment_type === 'Etat' && val && !isNaN(numVal) && numVal > 0 && numVal < 8;
+                      const legendStatuses = ['uw','ch','nż','nz','bl','op','kr','krew'];
+                      const hasLegendStatus = legendStatuses.includes(val);
+                      const isNotFuture = !isAfter(startOfDay(day), startOfDay(new Date()));
+                      const isShortHours = !isWknd && isNotFuture && emp.employment_type === 'Etat' && (
+                        (val && !isNaN(numVal) && numVal > 0 && numVal < 8) ||
+                        (!hasLegendStatus && (val === '' || (!isNaN(numVal) && numVal === 0)))
+                      );
+
+                      // Blokada transferu: komórka zablokowana jeśli dzień poza zakresem przynależności do tej hali
+                      const isTransferLocked = !isDateInTransferRange(emp.id, dateStr);
 
                       return (
                         <td
                           key={dateStr}
-                          className={`p-0 border-r relative ${isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${isToday && !val ? 'bg-yellow-50' : ''} ${isShortHours && hasComment ? 'cell-short-hours-commented' : ''} ${isShortHours && !hasComment ? 'cell-short-hours' : ''}`}
-                          title={isShortHours && hasComment ? `Komentarz: ${dayComments[commentKey]}` : isShortHours ? 'Kliknij aby dodać komentarz' : undefined}
+                          className={`p-0 border-r relative ${isTransferLocked ? 'bg-gray-100 border-gray-300' : isWknd ? 'bg-red-50 border-red-200' : 'border-gray-200'} ${!isTransferLocked && isToday && !val ? 'bg-yellow-50' : ''} ${!isTransferLocked && isShortHours && hasComment ? 'cell-short-hours-commented' : ''} ${!isTransferLocked && isShortHours && !hasComment ? 'cell-short-hours' : ''}`}
+                          title={isTransferLocked ? 'Pracownik był na innej hali w tym dniu' : isShortHours && hasComment ? `Komentarz: ${dayComments[commentKey]}` : isShortHours ? 'Kliknij aby dodać komentarz' : undefined}
                         >
                           <input
                             key={val}
                             type="text"
                             data-row={emp.id}
                             data-col={dateStr}
-                            defaultValue={val}
+                            defaultValue={isTransferLocked ? '' : val}
+                            readOnly={isGuest || isTransferLocked}
                             onBlur={(e) => {
-                              if (e.target.value !== val) {
+                              if (!isGuest && e.target.value !== val) {
                                 handleCellChange(emp.id, dateStr, e.target.value);
                               }
                             }}
@@ -1389,32 +1482,46 @@ export default function Foreman({ user }: { user: any }) {
                               const currentIndex = allInputs.indexOf(currentInput);
                               const numCols = daysInMonth.length;
                               
+                              // Pomocnik: sprawdza czy input jest w kolumnie kalendarza (ma datę w data-col)
+                              const isCalendarInput = (inp: HTMLInputElement) => /^\d{4}-\d{2}-\d{2}$/.test(inp.dataset.col || '');
+                              
+                              // Pomocnik: zapisuje bieżącą komórkę jeśli zmieniona
+                              const saveIfChanged = () => {
+                                if (!isGuest && currentInput.value !== val) {
+                                  handleCellChange(emp.id, dateStr, currentInput.value);
+                                }
+                              };
+                              
                               let nextInput: HTMLInputElement | null = null;
                               
                               if (e.key === 'Enter' || e.key === 'ArrowDown') {
                                 e.preventDefault();
-                                if (currentInput.value !== val) {
-                                  handleCellChange(emp.id, dateStr, currentInput.value);
-                                }
+                                saveIfChanged();
                                 nextInput = allInputs[currentIndex + numCols] || null;
                               } else if (e.key === 'ArrowUp') {
                                 e.preventDefault();
+                                saveIfChanged();
                                 nextInput = allInputs[currentIndex - numCols] || null;
                               } else if (e.key === 'ArrowRight') {
                                 e.preventDefault();
-                                nextInput = allInputs[currentIndex + 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex + 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               } else if (e.key === 'ArrowLeft') {
                                 e.preventDefault();
-                                nextInput = allInputs[currentIndex - 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex - 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               } else if (e.key === 'Tab' && !e.shiftKey) {
                                 e.preventDefault();
-                                if (currentInput.value !== val) {
-                                  handleCellChange(emp.id, dateStr, currentInput.value);
-                                }
-                                nextInput = allInputs[currentIndex + 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex + 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               } else if (e.key === 'Tab' && e.shiftKey) {
                                 e.preventDefault();
-                                nextInput = allInputs[currentIndex - 1] || null;
+                                saveIfChanged();
+                                const candidate = allInputs[currentIndex - 1] || null;
+                                nextInput = candidate && isCalendarInput(candidate) ? candidate : null;
                               }
                               
                               if (nextInput) {
@@ -1422,9 +1529,9 @@ export default function Foreman({ user }: { user: any }) {
                                 nextInput.select();
                               }
                             }}
-                            className={`w-full h-full min-h-[36px] text-center text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-colors ${colorClass} ${isWknd && !val ? 'bg-red-50' : ''} ${isToday && !val ? 'bg-yellow-50' : ''}`}
+                            className={`w-full h-full min-h-[36px] text-center text-xs outline-none transition-colors ${isTransferLocked ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : `focus:bg-blue-200 focus:text-blue-900 ${colorClass} ${isWknd && !val ? 'bg-red-50' : ''} ${isToday && !val ? 'bg-yellow-50' : ''}`}`}
                           />
-                          {isShortHours && (
+                          {!isTransferLocked && isShortHours && (
                             <button
                               type="button"
                               onClick={() => {

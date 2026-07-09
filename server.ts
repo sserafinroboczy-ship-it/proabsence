@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import db from "./src/db/setup.ts";
-import { sendLimitExceededEmail, LimitExceededData } from "./src/lib/mailer.ts";
+import { sendLimitExceededEmail, LimitExceededData, sendLimitWarningEmail, LimitWarningData } from "./src/lib/mailer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,13 +107,19 @@ async function startServer() {
     }
   };
 
+  // Block write access for guest role
+  const blockGuest = (req: any, res: any, next: any) => {
+    if (req.user?.role === 'guest') return res.status(403).json({ error: "Konto gościa — tylko podgląd" });
+    next();
+  };
+
   // === HELPERS ===
   // Superadmin = konto 'admin' (username) — ma pełny dostęp do wszystkich hal
   const isSuperAdmin = (user: any) => user.username === 'admin';
 
   // Zwraca liste hall_id do których user ma dostęp (null = wszystkie)
   const getAllowedHallIds = (user: any): number[] | null => {
-    if (isSuperAdmin(user)) return null;
+    if (isSuperAdmin(user) || user.role === 'guest') return null;
     // Adminowie, foremani i mistrzowie — sprawdź user_halls
     const rows = db.prepare("SELECT hall_id FROM user_halls WHERE user_id = ?").all(user.id) as any[];
     if (rows.length > 0) return rows.map(r => r.hall_id);
@@ -177,7 +183,7 @@ async function startServer() {
 
   // User-Halls management
   app.get("/api/user-halls/:userId", authenticate, (req: any, res) => {
-    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    if (req.user.role !== "admin" && req.user.role !== "guest") return res.status(403).json({ error: "Forbidden" });
     const rows = db.prepare("SELECT hall_id FROM user_halls WHERE user_id = ?").all(req.params.userId);
     res.json(rows);
   });
@@ -214,8 +220,8 @@ async function startServer() {
 
   // Users CRUD
   app.get("/api/users", authenticate, (req: any, res) => {
-    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    if (isSuperAdmin(req.user)) {
+    if (req.user.role !== "admin" && req.user.role !== "guest") return res.status(403).json({ error: "Forbidden" });
+    if (isSuperAdmin(req.user) || req.user.role === "guest") {
       const users = db.prepare("SELECT id, username, role, hall_id, employee_number FROM users").all();
       res.json(users);
     } else {
@@ -361,7 +367,7 @@ async function startServer() {
 
   // Halls CRUD
   app.get("/api/halls", authenticate, (req: any, res) => {
-    if (!isSuperAdmin(req.user)) {
+    if (!isSuperAdmin(req.user) && req.user.role !== "guest") {
       const allowedIds = getAllowedHallIds(req.user) || [];
       if (allowedIds.length === 0) return res.json([]);
       const placeholders = allowedIds.map(() => '?').join(',');
@@ -417,7 +423,7 @@ async function startServer() {
     res.json(rows);
   });
 
-  app.post("/api/day-comments", authenticate, (req: any, res) => {
+  app.post("/api/day-comments", authenticate, blockGuest, (req: any, res) => {
     const isSupervisorOrAdmin = req.user.role === "admin" || req.user.role === "mistrz" || req.user.role === "foreman";
     if (!isSupervisorOrAdmin) return res.status(403).json({ error: "Forbidden" });
     const { employee_id, date, comment } = req.body;
@@ -430,7 +436,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.delete("/api/day-comments", authenticate, (req: any, res) => {
+  app.delete("/api/day-comments", authenticate, blockGuest, (req: any, res) => {
     const isSupervisorOrAdmin = req.user.role === "admin" || req.user.role === "mistrz" || req.user.role === "foreman";
     if (!isSupervisorOrAdmin) return res.status(403).json({ error: "Forbidden" });
     const { employee_id, date } = req.body;
@@ -476,32 +482,61 @@ async function startServer() {
   app.get("/api/employees", authenticate, (req: any, res) => {
     const hallId = req.query.hall_id;
     const includeDeleted = req.query.include_deleted === 'true';
+    const month = req.query.month as string | undefined; // format: YYYY-MM
     let employees;
     
-    // Domyślnie nie pokazuj usuniętych pracowników (is_deleted = 0 lub NULL)
-    const deletedFilter = includeDeleted ? '' : 'AND (is_deleted = 0 OR is_deleted IS NULL)';
-    
-    // Ogranicz do hal usera (dla adminów/foreman/mistrz)
+    const deletedFilter = includeDeleted ? '' : 'AND (e.is_deleted = 0 OR e.is_deleted IS NULL)';
     const allowedIds = getAllowedHallIds(req.user);
     
     if (hallId) {
-      // Jeśli podano konkretną halę, sprawdź czy user ma do niej dostęp
       if (allowedIds !== null && !allowedIds.includes(parseInt(hallId as string))) {
         return res.json([]);
       }
-      employees = db.prepare(`SELECT * FROM employees WHERE hall_id = ? ${deletedFilter} ORDER BY sort_order ASC, id ASC`).all(hallId);
+      // Jeśli podano miesiąc — pokaż pracownika na hali tylko jeśli jego transfer
+      // nakłada się na ten miesiąc (from_date <= koniec miesiąca AND (to_date IS NULL OR to_date > początek miesiąca))
+      if (month) {
+        const monthStart = `${month}-01`;
+        // Ostatni dzień miesiąca
+        const d = new Date(month + '-01');
+        d.setMonth(d.getMonth() + 1);
+        d.setDate(0);
+        const monthEnd = d.toISOString().slice(0, 10);
+        employees = db.prepare(`
+          SELECT DISTINCT e.* FROM employees e
+          JOIN employee_transfers et ON et.employee_id = e.id AND et.hall_id = ?
+          WHERE et.from_date <= ?
+            AND (et.to_date IS NULL OR et.to_date > ?)
+          ${deletedFilter}
+          ORDER BY e.sort_order ASC, e.id ASC
+        `).all(hallId, monthEnd, monthStart);
+      } else {
+        // Bez miesiąca — fallback: wszyscy z dowolnym transferem na tej hali
+        employees = db.prepare(`
+          SELECT DISTINCT e.* FROM employees e
+          LEFT JOIN employee_transfers et ON et.employee_id = e.id AND et.hall_id = ?
+          WHERE (et.hall_id = ? OR (et.hall_id IS NULL AND e.hall_id = ?))
+          ${deletedFilter}
+          ORDER BY e.sort_order ASC, e.id ASC
+        `).all(hallId, hallId, hallId);
+      }
     } else if (allowedIds !== null) {
       if (allowedIds.length === 0) return res.json([]);
       const placeholders = allowedIds.map(() => '?').join(',');
-      employees = db.prepare(`SELECT * FROM employees WHERE hall_id IN (${placeholders}) ${deletedFilter} ORDER BY hall_id ASC, sort_order ASC, id ASC`).all(...allowedIds);
+      employees = db.prepare(`
+        SELECT DISTINCT e.* FROM employees e
+        LEFT JOIN employee_transfers et ON et.employee_id = e.id AND et.hall_id IN (${placeholders})
+        WHERE (et.hall_id IN (${placeholders}) OR e.hall_id IN (${placeholders}))
+        ${deletedFilter}
+        ORDER BY e.hall_id ASC, e.sort_order ASC, e.id ASC
+      `).all(...allowedIds, ...allowedIds, ...allowedIds);
     } else {
-      employees = db.prepare(`SELECT * FROM employees WHERE 1=1 ${deletedFilter} ORDER BY hall_id ASC, sort_order ASC, id ASC`).all();
+      employees = db.prepare(`SELECT * FROM employees e WHERE 1=1 ${deletedFilter} ORDER BY e.hall_id ASC, e.sort_order ASC, e.id ASC`).all();
     }
     res.json(employees);
   });
 
   // Employees CRUD
-  app.post("/api/employees", authenticate, (req: any, res) => {
+  app.post("/api/employees", authenticate, blockGuest, (req: any, res) => {
     const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
@@ -516,6 +551,11 @@ async function startServer() {
     const stmt = db.prepare("INSERT INTO employees (first_name, last_name, hall_id, position, employee_number, employment_type, is_supervisor, qualifications) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     const info = stmt.run(first_name, last_name, hall_id, position, employee_number || null, employment_type || 'Etat', isSupervisor, qualifications || '');
     
+    // Utwórz wpis w employee_transfers dla nowego pracownika
+    const today = new Date().toISOString().slice(0, 10);
+    db.prepare("INSERT INTO employee_transfers (employee_id, hall_id, from_date, to_date, transferred_by, created_at) VALUES (?, ?, ?, NULL, ?, ?)")
+      .run(info.lastInsertRowid, hall_id, today, req.user.id, getLocalTimestamp());
+    
     const hall = db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any;
     db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
       req.user.id, "DODANO_PRACOWNIKA", `${first_name} ${last_name} | Nr: ${employee_number || '-'} | Stanowisko: ${position || '-'} | Hala: ${hall?.name || '-'} | Forma: ${employment_type || 'Etat'} | Kwalif: ${qualifications || '-'}`, getLocalTimestamp()
@@ -523,7 +563,7 @@ async function startServer() {
     res.json({ id: info.lastInsertRowid });
   });
 
-  app.put("/api/employees/:id", authenticate, (req: any, res) => {
+  app.put("/api/employees/:id", authenticate, blockGuest, (req: any, res) => {
     const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
@@ -557,6 +597,16 @@ async function startServer() {
       const oldHall = db.prepare("SELECT name FROM halls WHERE id = ?").get(oldHallId) as any;
       const newHall = db.prepare("SELECT name FROM halls WHERE id = ?").get(hall_id) as any;
       changes.push(`Hala: "${oldHall?.name}" → "${newHall?.name}"`);
+      
+      // Zamknij aktualny wpis transferu (ustaw to_date na wczoraj)
+      const today = new Date().toISOString().slice(0, 10);
+      db.prepare("UPDATE employee_transfers SET to_date = ? WHERE employee_id = ? AND to_date IS NULL").run(today, req.params.id);
+      
+      // Otwórz nowy wpis transferu na nową halę
+      db.prepare("INSERT INTO employee_transfers (employee_id, hall_id, from_date, to_date, transferred_by, created_at) VALUES (?, ?, ?, NULL, ?, ?)").run(
+        req.params.id, hall_id, today, req.user.id, getLocalTimestamp()
+      );
+      
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
         req.user.id, "PRZENIESIENIE_PRACOWNIKA", `${existing.first_name} ${existing.last_name} | ${changes.join(' | ')}`, getLocalTimestamp()
       );
@@ -568,7 +618,21 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.delete("/api/employees/:id", authenticate, (req: any, res) => {
+  // Employee transfers history
+  app.get("/api/employee-transfers", authenticate, (req: any, res) => {
+    const { hall_id } = req.query;
+    if (!hall_id) return res.status(400).json({ error: "Wymagane: hall_id" });
+    const rows = db.prepare(`
+      SELECT et.*, e.first_name, e.last_name, e.employee_number, e.position, e.employment_type, e.is_supervisor, e.qualifications, e.shift, e.sort_order
+      FROM employee_transfers et
+      JOIN employees e ON e.id = et.employee_id
+      WHERE et.hall_id = ? AND (e.is_deleted = 0 OR e.is_deleted IS NULL)
+      ORDER BY et.from_date ASC
+    `).all(hall_id);
+    res.json(rows);
+  });
+
+  app.delete("/api/employees/:id", authenticate, blockGuest, (req: any, res) => {
     const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
     if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
     
@@ -595,7 +659,7 @@ async function startServer() {
   });
 
   // Reorder employees (drag & drop)
-  app.post("/api/employees/reorder", authenticate, (req: any, res) => {
+  app.post("/api/employees/reorder", authenticate, blockGuest, (req: any, res) => {
     try {
       const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
       if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
@@ -619,7 +683,7 @@ async function startServer() {
   });
 
   // Update employee shift
-  app.put("/api/employees/:id/shift", authenticate, (req: any, res) => {
+  app.put("/api/employees/:id/shift", authenticate, blockGuest, (req: any, res) => {
     try {
       const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
       if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
@@ -647,7 +711,7 @@ async function startServer() {
   });
 
   // Rotate shifts for all employees in a hall
-  app.post("/api/halls/:id/rotate-shifts", authenticate, (req: any, res) => {
+  app.post("/api/halls/:id/rotate-shifts", authenticate, blockGuest, (req: any, res) => {
     try {
       const isForeman = req.user.role === "foreman" || req.user.role === "mistrz";
       if (req.user.role !== "admin" && !isForeman) return res.status(403).json({ error: "Forbidden" });
@@ -697,8 +761,20 @@ async function startServer() {
   // Absences - zawiera też dane usuniętych pracowników dla zachowania historii
   app.get("/api/absences", authenticate, (req: any, res) => {
     const { start_date, end_date, hall_id } = req.query;
+    // Pobierz absencje dla wszystkich pracowników którzy kiedykolwiek byli na danej hali
+    // (przez employee_transfers LUB aktualny e.hall_id jako fallback)
+    // Frontend sam decyduje które komórki są aktywne/zablokowane na podstawie dat transferu
     let query = `
-      SELECT a.*, e.first_name, e.last_name, e.hall_id, e.is_deleted, e.employment_type 
+      SELECT a.*, e.first_name, e.last_name,
+             COALESCE(
+               (SELECT et2.hall_id FROM employee_transfers et2
+                WHERE et2.employee_id = a.employee_id
+                  AND a.date >= et2.from_date
+                  AND (et2.to_date IS NULL OR a.date < et2.to_date)
+                LIMIT 1),
+               e.hall_id
+             ) as hall_id,
+             e.is_deleted, e.employment_type 
       FROM absences a
       LEFT JOIN employees e ON a.employee_id = e.id
       WHERE a.date >= ? AND a.date <= ?
@@ -706,16 +782,24 @@ async function startServer() {
     const params: any[] = [start_date, end_date];
     
     if (hall_id) {
-      query += " AND e.hall_id = ?";
-      params.push(hall_id);
+      // Zwróć absencje pracowników którzy kiedykolwiek byli na tej hali
+      query += ` AND a.employee_id IN (
+        SELECT DISTINCT employee_id FROM employee_transfers WHERE hall_id = ?
+        UNION
+        SELECT id FROM employees WHERE hall_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
+      )`;
+      params.push(hall_id, hall_id);
     } else {
-      // Ogranicz do hal usera (dla adminów/foreman/mistrz)
       const allowedIds = getAllowedHallIds(req.user);
       if (allowedIds !== null) {
         if (allowedIds.length === 0) return res.json([]);
         const placeholders = allowedIds.map(() => '?').join(',');
-        query += ` AND e.hall_id IN (${placeholders})`;
-        params.push(...allowedIds);
+        query += ` AND a.employee_id IN (
+          SELECT DISTINCT employee_id FROM employee_transfers WHERE hall_id IN (${placeholders})
+          UNION
+          SELECT id FROM employees WHERE hall_id IN (${placeholders}) AND (is_deleted = 0 OR is_deleted IS NULL)
+        )`;
+        params.push(...allowedIds, ...allowedIds);
       }
     }
     
@@ -800,7 +884,7 @@ async function startServer() {
     res.json(notesWithHistory);
   });
 
-  app.post("/api/calendar/notes", authenticate, (req: any, res) => {
+  app.post("/api/calendar/notes", authenticate, blockGuest, (req: any, res) => {
     const { date, content } = req.body;
     if (!date) return res.status(400).json({ error: "Date is required" });
 
@@ -903,23 +987,34 @@ async function startServer() {
 
   // Notification Emails API
   app.get("/api/notification-emails", authenticate, (req: any, res) => {
-    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    if (req.user.role !== "admin" && req.user.role !== "guest") return res.status(403).json({ error: "Forbidden" });
     const emails = db.prepare("SELECT * FROM notification_emails ORDER BY created_at DESC").all();
     res.json(emails);
   });
 
+  app.patch("/api/notification-emails/:id", authenticate, (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const { notification_type } = req.body;
+    if (!['exceeded', 'warning', 'both'].includes(notification_type)) {
+      return res.status(400).json({ error: "Nieprawidłowy typ powiadomienia" });
+    }
+    db.prepare("UPDATE notification_emails SET notification_type = ? WHERE id = ?").run(notification_type, req.params.id);
+    res.json({ success: true });
+  });
+
   app.post("/api/notification-emails", authenticate, (req: any, res) => {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-    const { email, is_global, user_id } = req.body;
+    const { email, is_global, user_id, notification_type } = req.body;
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: "Nieprawidłowy adres email" });
     }
     try {
       const globalFlag = is_global ? 1 : 0;
-      const info = db.prepare("INSERT INTO notification_emails (email, is_global, user_id) VALUES (?, ?, ?)").run(email, globalFlag, user_id || null);
+      const notifType = ['exceeded', 'warning', 'both'].includes(notification_type) ? notification_type : 'exceeded';
+      const info = db.prepare("INSERT INTO notification_emails (email, is_global, user_id, notification_type) VALUES (?, ?, ?, ?)").run(email, globalFlag, user_id || null, notifType);
       const typeLabel = globalFlag ? 'globalny' : (user_id ? `przypisany do użytkownika ID:${user_id}` : 'bez przypisania');
       db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, "DODANO_EMAIL_POWIADOMIEN", `Dodano email: ${email} (${typeLabel})`, getLocalTimestamp()
+        req.user.id, "DODANO_EMAIL_POWIADOMIEN", `Dodano email: ${email} (${typeLabel}, typ: ${notifType})`, getLocalTimestamp()
       );
       res.json({ id: info.lastInsertRowid, email, is_global: globalFlag, user_id: user_id || null });
     } catch (e: any) {
@@ -942,26 +1037,33 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // Check and send limit exceeded notifications
+  // Pomocnik: pobierz odbiorców emaili dla danej hali i typu powiadomienia
+  function getNotificationRecipients(hallId: number, notifType: 'warning' | 'exceeded'): string[] {
+    const allEmails = db.prepare(`
+      SELECT ne.*, u.hall_id as assigned_hall, u.role as user_role
+      FROM notification_emails ne 
+      LEFT JOIN users u ON u.id = ne.user_id
+    `).all() as any[];
+
+    const recipientEmails = new Set<string>();
+    allEmails.forEach((row: any) => {
+      const matchesType = row.notification_type === notifType || row.notification_type === 'both' || !row.notification_type;
+      if (!matchesType) return;
+      if (row.is_global) {
+        recipientEmails.add(row.email);
+      } else if (!row.user_id) {
+        recipientEmails.add(row.email);
+      } else if (row.assigned_hall === hallId) {
+        recipientEmails.add(row.email);
+      }
+    });
+    return Array.from(recipientEmails);
+  }
+
+  // Check and send limit notifications (warning + exceeded)
   app.post("/api/check-limit-notifications", authenticate, async (req: any, res) => {
     const { employee_id, month, hours_used, hours_limit } = req.body;
-    
-    if (hours_used <= hours_limit) {
-      return res.json({ sent: false, reason: "Limit nie przekroczony" });
-    }
-
-    // Najpierw spróbuj zapisać - to zapobiega race condition (duplikatom)
-    // Jeśli zapis się nie uda (UNIQUE constraint), znaczy że już wysłano
-    try {
-      db.prepare(
-        "INSERT INTO limit_exceeded_notifications (employee_id, month) VALUES (?, ?)"
-      ).run(employee_id, month);
-    } catch (e: any) {
-      if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return res.json({ sent: false, reason: "Powiadomienie już wysłane" });
-      }
-      throw e;
-    }
+    const remaining = hours_limit - hours_used;
 
     // Pobierz dane pracownika i hali
     const employee = db.prepare(`
@@ -975,63 +1077,100 @@ async function startServer() {
       return res.status(404).json({ error: "Pracownik nie znaleziony" });
     }
 
-    // Pobierz listę emaili do powiadomień z filtrowaniem per hala
     const hallId = employee.hall_id;
-    const allEmails = db.prepare("SELECT ne.*, uh.hall_id as assigned_hall FROM notification_emails ne LEFT JOIN user_halls uh ON uh.user_id = ne.user_id").all() as any[];
+    const results: any[] = [];
 
-    // Odbiorcy = globalni + ci których user ma tę halę przypisaną + bez user_id (legacy)
-    const recipientEmails = new Set<string>();
-    allEmails.forEach((row: any) => {
-      if (row.is_global) {
-        recipientEmails.add(row.email);
-      } else if (!row.user_id) {
-        // legacy — bez przypisania, traktuj jako globalny
-        recipientEmails.add(row.email);
-      } else if (row.assigned_hall === hallId) {
-        recipientEmails.add(row.email);
+    // === TYP: warning (pozostało <= 20h, ale jeszcze nie przekroczono) ===
+    if (remaining <= 20 && remaining > 0) {
+      try {
+        db.prepare(
+          "INSERT INTO limit_exceeded_notifications (employee_id, month, type) VALUES (?, ?, 'warning')"
+        ).run(employee_id, month);
+
+        const recipients = getNotificationRecipients(hallId, 'warning');
+        if (recipients.length > 0) {
+          const data: LimitWarningData = {
+            employeeNumber: employee.employee_number || '-',
+            firstName: employee.first_name,
+            lastName: employee.last_name,
+            hallName: employee.hall_name || 'Nieprzypisana',
+            employmentType: employee.employment_type,
+            hoursLimit: hours_limit,
+            hoursUsed: hours_used,
+            hoursRemaining: remaining,
+            month
+          };
+          const sent = await sendLimitWarningEmail(recipients, data);
+          if (sent) {
+            db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+              req.user.id, "WYSLANO_POWIADOMIENIE_OSTRZEZENIE",
+              `Ostrzeżenie o zbliżaniu się do limitu: ${employee.first_name} ${employee.last_name} (pozostało ${remaining}h)`,
+              getLocalTimestamp()
+            );
+            results.push({ type: 'warning', sent: true, recipients });
+          } else {
+            db.prepare("DELETE FROM limit_exceeded_notifications WHERE employee_id = ? AND month = ? AND type = 'warning'").run(employee_id, month);
+            results.push({ type: 'warning', sent: false });
+          }
+        } else {
+          results.push({ type: 'warning', sent: false, reason: 'Brak emaili dla ostrzeżeń' });
+        }
+      } catch (e: any) {
+        if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.code === 'SQLITE_CONSTRAINT') {
+          results.push({ type: 'warning', sent: false, reason: 'Już wysłano' });
+        } else throw e;
       }
-    });
-
-    if (recipientEmails.size === 0) {
-      return res.json({ sent: false, reason: "Brak skonfigurowanych emaili dla tej hali" });
     }
 
-    const recipients = Array.from(recipientEmails);
-    const hoursExceeded = hours_used - hours_limit;
+    // === TYP: exceeded (przekroczono limit) ===
+    if (remaining <= 0) {
+      try {
+        db.prepare(
+          "INSERT INTO limit_exceeded_notifications (employee_id, month, type) VALUES (?, ?, 'exceeded')"
+        ).run(employee_id, month);
 
-    const data: LimitExceededData = {
-      employeeNumber: employee.employee_number || '-',
-      firstName: employee.first_name,
-      lastName: employee.last_name,
-      hallName: employee.hall_name || 'Nieprzypisana',
-      employmentType: employee.employment_type,
-      hoursLimit: hours_limit,
-      hoursUsed: hours_used,
-      hoursExceeded: hoursExceeded,
-      month: month
-    };
-
-    const sent = await sendLimitExceededEmail(recipients, data);
-
-    if (sent) {
-      // Zapis do limit_exceeded_notifications już został wykonany na początku
-      db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
-        req.user.id, 
-        "WYSLANO_POWIADOMIENIE_LIMIT", 
-        `Wysłano powiadomienie o przekroczeniu limitu: ${employee.first_name} ${employee.last_name} (${hoursExceeded}h ponad limit)`, 
-        getLocalTimestamp()
-      );
-    } else {
-      // Jeśli mail się nie wysłał, usuń wpis z bazy aby można było spróbować ponownie
-      db.prepare("DELETE FROM limit_exceeded_notifications WHERE employee_id = ? AND month = ?").run(employee_id, month);
+        const recipients = getNotificationRecipients(hallId, 'exceeded');
+        if (recipients.length > 0) {
+          const hoursExceeded = hours_used - hours_limit;
+          const data: LimitExceededData = {
+            employeeNumber: employee.employee_number || '-',
+            firstName: employee.first_name,
+            lastName: employee.last_name,
+            hallName: employee.hall_name || 'Nieprzypisana',
+            employmentType: employee.employment_type,
+            hoursLimit: hours_limit,
+            hoursUsed: hours_used,
+            hoursExceeded,
+            month
+          };
+          const sent = await sendLimitExceededEmail(recipients, data);
+          if (sent) {
+            db.prepare("INSERT INTO logs (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)").run(
+              req.user.id, "WYSLANO_POWIADOMIENIE_LIMIT",
+              `Przekroczenie limitu: ${employee.first_name} ${employee.last_name} (+${hoursExceeded}h ponad limit)`,
+              getLocalTimestamp()
+            );
+            results.push({ type: 'exceeded', sent: true, recipients });
+          } else {
+            db.prepare("DELETE FROM limit_exceeded_notifications WHERE employee_id = ? AND month = ? AND type = 'exceeded'").run(employee_id, month);
+            results.push({ type: 'exceeded', sent: false });
+          }
+        } else {
+          results.push({ type: 'exceeded', sent: false, reason: 'Brak emaili dla przekroczeń' });
+        }
+      } catch (e: any) {
+        if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.code === 'SQLITE_CONSTRAINT') {
+          results.push({ type: 'exceeded', sent: false, reason: 'Już wysłano' });
+        } else throw e;
+      }
     }
 
-    res.json({ sent, recipients: sent ? recipients : [] });
+    res.json({ results });
   });
 
   // Logs
   app.get("/api/logs", authenticate, (req: any, res) => {
-    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    if (req.user.role !== "admin" && req.user.role !== "guest") return res.status(403).json({ error: "Forbidden" });
     
     const { month } = req.query; // format: YYYY-MM
     
@@ -1060,7 +1199,7 @@ async function startServer() {
 
   // Backups API
   app.get("/api/backups", authenticate, (req: any, res) => {
-    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    if (req.user.role !== "admin" && req.user.role !== "guest") return res.status(403).json({ error: "Forbidden" });
     ensureBackupDir();
     try {
       const files = fs.readdirSync(BACKUP_DIR)

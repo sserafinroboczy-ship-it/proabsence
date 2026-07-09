@@ -165,7 +165,7 @@ const seedUser = (username: string, passwordHash: string, role: string) => {
 seedUser("admin", adminHash, "admin");
 seedUser("administrator", adminHash, "admin");
 seedUser("super", superHash, "admin");
-seedUser("guest", bcrypt.hashSync("guest123", 10), "guest");
+seedUser("gosc", bcrypt.hashSync("imc123", 10), "guest");
 
 // Migration: Add note_reads table if not exists (already there but keeping flow)
 
@@ -437,6 +437,76 @@ try {
   }
 } catch (e) {
   console.error('[Migration] Error swapping names:', e);
+}
+
+// Migration: Create employee_transfers table (history of employee hall assignments)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS employee_transfers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    hall_id INTEGER NOT NULL,
+    from_date TEXT NOT NULL,
+    to_date TEXT,
+    transferred_by INTEGER,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (employee_id) REFERENCES employees(id),
+    FOREIGN KEY (hall_id) REFERENCES halls(id)
+  )`);
+} catch (e) {}
+
+// Migration: Seed initial hall assignment for existing employees (one-time)
+try {
+  const transferFlag = db.prepare("SELECT value FROM settings WHERE key = 'transfers_seeded'").get() as any;
+  if (!transferFlag) {
+    const emps = db.prepare("SELECT id, hall_id FROM employees WHERE is_deleted = 0 OR is_deleted IS NULL").all() as any[];
+    emps.forEach((e: any) => {
+      const exists = db.prepare("SELECT id FROM employee_transfers WHERE employee_id = ?").get(e.id);
+      if (!exists) {
+        db.prepare("INSERT INTO employee_transfers (employee_id, hall_id, from_date, to_date, created_at) VALUES (?, ?, ?, NULL, ?)")
+          .run(e.id, e.hall_id, '2000-01-01', new Date().toISOString().slice(0, 10));
+      }
+    });
+    db.prepare("INSERT INTO settings (key, value) VALUES ('transfers_seeded', '1')").run();
+    console.log('[Migration] Seeded employee_transfers for existing employees');
+  }
+} catch (e) {
+  console.error('[Migration] Error seeding employee_transfers:', e);
+}
+
+// Migration: Add notification_type to notification_emails ('exceeded' | 'warning' | 'both')
+try { db.exec(`ALTER TABLE notification_emails ADD COLUMN notification_type TEXT DEFAULT 'exceeded'`); } catch (e) {}
+
+// Migration: Przebuduj limit_exceeded_notifications — usuń stary UNIQUE(employee_id, month),
+// dodaj kolumnę type i nowy UNIQUE(employee_id, month, type).
+// SQLite nie pozwala na DROP CONSTRAINT, więc robimy to przez CREATE new → INSERT → DROP old → RENAME.
+const limitNotifSchemaV2 = (db.prepare("SELECT value FROM settings WHERE key = 'limit_notif_schema_v2'").get() as any);
+if (!limitNotifSchemaV2) {
+  try {
+    // Dodaj kolumnę type jeśli jeszcze nie istnieje (na wypadek pierwszego uruchomienia)
+    try { db.exec(`ALTER TABLE limit_exceeded_notifications ADD COLUMN type TEXT DEFAULT 'exceeded'`); } catch (e) {}
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS limit_exceeded_notifications_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER NOT NULL,
+        month TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'exceeded',
+        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(employee_id, month, type),
+        FOREIGN KEY (employee_id) REFERENCES employees(id)
+      )
+    `);
+    db.exec(`
+      INSERT OR IGNORE INTO limit_exceeded_notifications_new (id, employee_id, month, type, sent_at)
+      SELECT id, employee_id, month, COALESCE(type, 'exceeded'), sent_at FROM limit_exceeded_notifications
+    `);
+    db.exec(`DROP TABLE limit_exceeded_notifications`);
+    db.exec(`ALTER TABLE limit_exceeded_notifications_new RENAME TO limit_exceeded_notifications`);
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('limit_notif_schema_v2', '1')").run();
+    console.log('✅ Migracja limit_notif_schema_v2: przebudowano tabelę limit_exceeded_notifications');
+  } catch (e: any) {
+    console.error('❌ Migracja limit_notif_schema_v2 failed:', e.message);
+  }
 }
 
 // Seed some sample data if empty

@@ -1095,7 +1095,10 @@ export default function Dashboard() {
                   return (
                     <div key={q.label} className={`${c.bg} p-5 rounded-xl border ${c.border}`}>
                       <div className="flex items-center justify-between mb-3">
-                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${c.badge}`}>{q.label}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs font-bold px-2 py-1 rounded-full ${c.badge}`}>{q.label}</span>
+                          {q.isDeduction && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-semibold">-0.5h/dzień</span>}
+                        </div>
                         <svg className={`w-5 h-5 ${c.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>

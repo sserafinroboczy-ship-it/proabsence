@@ -1,4 +1,4 @@
-# ProAbsence v1.0.0 - Backend
+# ProAbsence v1.1.0 - Backend
 # Autor: Sebastian Serafin
 
 FROM node:20-alpine
